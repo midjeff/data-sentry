@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { VIDEO_FORMAT_DESCRIPTION } from './videoFormats';
 
 const en = {
+  history: 'Analysis history', historyLocal: 'Stored in this browser, including videos.', historyEmpty: 'Completed analyses will appear here.', deleteAnalysis: 'Delete analysis', savedAnalysis: 'Saved analysis', analysisRequest: 'Analysis request', defaultRequest: 'Review cash-handling activity.', requestPlaceholder: 'What should be checked in the video? (optional)', historyError: 'Could not read or save history. Browser storage may be unavailable or full; new records remain available in this session.',
+  hideSidebar: 'Hide sidebar', showSidebar: 'Show sidebar',
   analysis: 'Video analysis', analysisShort: 'Analysis', results: 'Results',
   language: 'Interface language', lightTheme: 'Use light theme', darkTheme: 'Use dark theme',
   uploadTitle: 'Upload a video', uploadSubtitle: 'Select a recording to review cash-handling activity.',
@@ -31,6 +33,8 @@ const en = {
 
 type Messages = { [K in keyof typeof en]: string };
 const ru: Messages = {
+  history: 'История анализов', historyLocal: 'Хранится в этом браузере вместе с видео.', historyEmpty: 'Здесь появятся завершённые анализы.', deleteAnalysis: 'Удалить анализ', savedAnalysis: 'Сохранённый анализ', analysisRequest: 'Запрос на анализ', defaultRequest: 'Проверить операции с наличными.', requestPlaceholder: 'Что нужно проверить в видео? (необязательно)', historyError: 'Не удалось прочитать или сохранить историю. Хранилище браузера недоступно или заполнено; новые записи доступны в текущем сеансе.',
+  hideSidebar: 'Скрыть боковое меню', showSidebar: 'Открыть боковое меню',
   analysis: 'Анализ видео', analysisShort: 'Анализ', results: 'Результаты',
   language: 'Язык интерфейса', lightTheme: 'Включить светлую тему', darkTheme: 'Включить тёмную тему',
   uploadTitle: 'Загрузите видео', uploadSubtitle: 'Выберите запись для проверки операций с наличными.',
@@ -59,6 +63,8 @@ const ru: Messages = {
 };
 
 const kk: Messages = {
+  history: 'Талдау тарихы', historyLocal: 'Бейнелермен бірге осы браузерде сақталады.', historyEmpty: 'Аяқталған талдаулар осында көрсетіледі.', deleteAnalysis: 'Талдауды жою', savedAnalysis: 'Сақталған талдау', analysisRequest: 'Талдау сұрауы', defaultRequest: 'Қолма-қол ақшамен операцияларды тексеру.', requestPlaceholder: 'Бейнеде нені тексеру керек? (міндетті емес)', historyError: 'Тарихты оқу немесе сақтау мүмкін болмады. Браузер қоймасы қолжетімсіз немесе толы; жаңа жазбалар осы сеанста қолжетімді.',
+  hideSidebar: 'Бүйірлік мәзірді жасыру', showSidebar: 'Бүйірлік мәзірді ашу',
   analysis: 'Бейнені талдау', analysisShort: 'Талдау', results: 'Нәтижелер',
   language: 'Интерфейс тілі', lightTheme: 'Ашық тақырыпқа ауысу', darkTheme: 'Қараңғы тақырыпқа ауысу',
   uploadTitle: 'Бейнені жүктеңіз', uploadSubtitle: 'Қолма-қол ақшамен жасалатын операцияларды тексеру үшін жазбаны таңдаңыз.',

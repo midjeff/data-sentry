@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, FileCheck, Moon, ScanLine, Sun } from 'lucide-react';
+import { ChevronDown, FileCheck, Moon, PanelLeftClose, PanelLeftOpen, ScanLine, Sun, Trash2 } from 'lucide-react';
 import { useI18n, type Language } from '../i18n';
+
+import type { AnalysisRecord } from '../history';
 
 export type View = 'analysis' | 'results';
 
@@ -80,21 +82,32 @@ function LanguageSelector() {
   </div>;
 }
 
-export function Header() {
+export function Header({ sidebarOpen, onToggleSidebar }: { sidebarOpen: boolean; onToggleSidebar: () => void }) {
+  const { t } = useI18n();
   return <header className="header">
-    <div className="brand"><img src="/data-sentry.png" alt="" width="56" height="56" /><span>DATA <span className="font-normal">Sentry</span></span></div>
+    <div className="flex items-center gap-2"><button type="button" className="icon-button sidebar-toggle" onClick={onToggleSidebar} aria-expanded={sidebarOpen} aria-controls="sidebar-navigation" aria-label={t(sidebarOpen ? 'hideSidebar' : 'showSidebar')} title={t(sidebarOpen ? 'hideSidebar' : 'showSidebar')}>{sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}</button><div className="brand"><img src="/data-sentry.png" alt="" width="56" height="56" /><span>DATA <span className="font-normal">Sentry</span></span></div></div>
     <div className="flex items-center gap-2 sm:gap-4"><ThemeToggle /><span className="header-divider" /><LanguageSelector /></div>
   </header>;
 }
 
-export function Navigation({ view, onNavigate, hasResults, mobile = false }: { view: View; onNavigate: (view: View) => void; hasResults: boolean; mobile?: boolean }) {
-  const { t } = useI18n();
-  return <nav className={mobile ? 'mobile-navigation' : 'sidebar'}>
+export function Navigation({ view, onNavigate, hasResults, mobile = false, hidden = false, history = [], activeId, onOpenHistory, onDeleteHistory }: { view: View; onNavigate: (view: View) => void; hasResults: boolean; mobile?: boolean; hidden?: boolean; history?: AnalysisRecord[]; activeId?: string | null; onOpenHistory?: (record: AnalysisRecord) => void; onDeleteHistory?: (record: AnalysisRecord) => void }) {
+  const { t, language } = useI18n();
+  return <nav id={mobile ? undefined : 'sidebar-navigation'} hidden={hidden} className={mobile ? 'mobile-navigation' : 'sidebar'}>
     <button className={`nav-item ${view === 'analysis' ? 'is-active' : ''}`} onClick={() => onNavigate('analysis')} aria-current={view === 'analysis' ? 'page' : undefined}>
       <ScanLine size={20} /><span>{t(mobile ? 'analysisShort' : 'analysis')}</span>
     </button>
     <button className={`nav-item ${view === 'results' ? 'is-active' : ''}`} onClick={() => onNavigate('results')} disabled={!hasResults} aria-current={view === 'results' ? 'page' : undefined}>
       <FileCheck size={20} /><span>{t('results')}</span>
     </button>
+    {!mobile && <section className="analysis-history" aria-label={t('history')}>
+      <h2>{t('history')}</h2>
+      {history.length === 0 && <p className="history-empty">{t('historyEmpty')}</p>}
+      <div className="history-list">{history.map((record) => <div key={record.id} className={`history-row ${view === 'results' && activeId === record.id ? 'is-active' : ''}`}>
+        <button className="history-open" onClick={() => onOpenHistory?.(record)} aria-current={view === 'results' && activeId === record.id ? 'true' : undefined} title={record.file.name}>
+          <span>{record.file.name}</span><small>{new Date(record.createdAt).toLocaleString(language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+        </button>
+        <button className="icon-button history-delete" aria-label={`${t('deleteAnalysis')}: ${record.file.name}`} title={t('deleteAnalysis')} onClick={() => onDeleteHistory?.(record)}><Trash2 size={15} /></button>
+      </div>)}</div>
+    </section>}
   </nav>;
 }

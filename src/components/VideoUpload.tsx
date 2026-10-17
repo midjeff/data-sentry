@@ -8,7 +8,8 @@ export function DemoNotice({ results = false }: { results?: boolean }) {
   return <div className="demo-notice"><FlaskConical size={17} className="shrink-0" /><div><strong>{t('demo')}</strong><p>{t(results ? 'demoResults' : 'demoNotice')}</p></div></div>;
 }
 
-export function VideoUpload({ file, onFile, onStart, scenario, setScenario }: {
+export function VideoUpload({ file, onFile, onStart, scenario, setScenario, request, onRequest }: {
+  request: string; onRequest: (value: string) => void;
   file: File | null; onFile: (file: File | null) => void; onStart: () => void;
   scenario: 'flagged' | 'clear'; setScenario: (value: 'flagged' | 'clear') => void;
 }) {
@@ -39,6 +40,7 @@ export function VideoUpload({ file, onFile, onStart, scenario, setScenario }: {
       </div>
       {error && <p className="error-message" role="alert">{t('invalid')}</p>}
       {file && <div className="selected-file"><div className="file-icon"><FileVideo size={23} /></div><div className="min-w-0 flex-1"><p className="file-name" title={file.name}>{file.name}</p><p className="file-meta">{size}<span>·</span><Check size={12} />{t('ready')}</p></div><button className="icon-button" aria-label={t('remove')} onClick={() => { onFile(null); setError(false); }}><X size={18} /></button></div>}
+      <label className="request-field"><span>{t('analysisRequest')}</span><textarea value={request} onChange={(e) => onRequest(e.target.value)} placeholder={t('requestPlaceholder')} rows={3} maxLength={4000} /></label>
       <div className="privacy-note"><LockKeyhole size={14} /><span>{t('local')}</span></div>
     </div>
     <div className="demo-settings"><DemoNotice /><div className="analysis-actions"><label className="scenario-select"><span>{t('scenario')}</span><select value={scenario} onChange={(e) => setScenario(e.target.value as 'flagged' | 'clear')}><option value="flagged">{t('withEvents')}</option><option value="clear">{t('noEvents')}</option></select></label><button className="button button-primary" disabled={!file} onClick={onStart}>{t('start')}<ArrowRight size={17} /></button></div></div>
