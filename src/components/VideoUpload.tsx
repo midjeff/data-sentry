@@ -29,7 +29,7 @@ export function VideoUpload({ file, onFile, onStart, scenario, setScenario }: {
   return <section className="upload-content">
     <div className="page-heading"><h1>{t('analysis')}</h1><p>{t('uploadSubtitle')}</p></div>
     <div className="upload-card">
-      <div className="card-heading"><h2>{t('uploadTitle')}</h2><span className="format-tag">{file ? videoFormatLabel(file) : t('video')}</span></div>
+      <div className="card-heading"><h2>{t('uploadTitle')}</h2></div>
       <input ref={input} type="file" accept={VIDEO_ACCEPT} aria-label={t('choose')} className="sr-only" tabIndex={-1} onChange={(e) => { accept(e.target.files); e.target.value = ''; }} />
       <div className={`dropzone ${dragging ? 'is-dragging' : ''}`} onDragEnter={(e) => { e.preventDefault(); depth.current++; setDragging(true); }} onDragOver={(e) => e.preventDefault()} onDragLeave={(e) => { e.preventDefault(); if (--depth.current <= 0) setDragging(false); }} onDrop={drop}>
         <div className="upload-symbol"><UploadCloud size={28} strokeWidth={1.6} /></div>
