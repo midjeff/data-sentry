@@ -1,6 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { ArrowRight, Check, FileVideo, FlaskConical, LockKeyhole, UploadCloud, X } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { isSupportedVideo, VIDEO_ACCEPT, videoFormatLabel } from '../videoFormats';
 
 export function DemoNotice({ results = false }: { results?: boolean }) {
   const { t } = useI18n();
@@ -18,7 +19,7 @@ export function VideoUpload({ file, onFile, onStart, scenario, setScenario }: {
   const [error, setError] = useState(false);
   const accept = (files: FileList | null) => {
     const chosen = files?.[0];
-    if (!chosen || files?.length !== 1 || !/\.mov$/i.test(chosen.name) || chosen.size === 0) { setError(true); return; }
+    if (!chosen || files?.length !== 1 || !isSupportedVideo(chosen)) { setError(true); return; }
     setError(false); onFile(chosen);
   };
   const drop = (event: DragEvent) => {
@@ -28,8 +29,8 @@ export function VideoUpload({ file, onFile, onStart, scenario, setScenario }: {
   return <section className="upload-content">
     <div className="page-heading"><h1>{t('analysis')}</h1><p>{t('uploadSubtitle')}</p></div>
     <div className="upload-card">
-      <div className="card-heading"><h2>{t('uploadTitle')}</h2><span className="format-tag">MOV</span></div>
-      <input ref={input} type="file" accept=".mov,video/quicktime" aria-label={t('choose')} className="sr-only" tabIndex={-1} onChange={(e) => { accept(e.target.files); e.target.value = ''; }} />
+      <div className="card-heading"><h2>{t('uploadTitle')}</h2><span className="format-tag">{file ? videoFormatLabel(file) : t('video')}</span></div>
+      <input ref={input} type="file" accept={VIDEO_ACCEPT} aria-label={t('choose')} className="sr-only" tabIndex={-1} onChange={(e) => { accept(e.target.files); e.target.value = ''; }} />
       <div className={`dropzone ${dragging ? 'is-dragging' : ''}`} onDragEnter={(e) => { e.preventDefault(); depth.current++; setDragging(true); }} onDragOver={(e) => e.preventDefault()} onDragLeave={(e) => { e.preventDefault(); if (--depth.current <= 0) setDragging(false); }} onDrop={drop}>
         <div className="upload-symbol"><UploadCloud size={28} strokeWidth={1.6} /></div>
         <h3>{t('drop')}</h3><p>{t('or')}</p>

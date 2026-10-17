@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { VIDEO_FORMAT_DESCRIPTION } from './videoFormats';
 
 const en = {
   analysis: 'Video analysis', analysisShort: 'Analysis', results: 'Results',
   language: 'Interface language', lightTheme: 'Use light theme', darkTheme: 'Use dark theme',
   uploadTitle: 'Upload a video', uploadSubtitle: 'Select a recording to review cash-handling activity.',
   drop: 'Drag and drop your video here', or: 'or select a file from your device', choose: 'Choose file',
-  supported: 'Supported format: .mov', local: 'Your video stays on this device.',
-  remove: 'Remove file', start: 'Start analysis', invalid: 'Select one non-empty .mov video file.',
+  video: 'Video', supported: `Supported formats: ${VIDEO_FORMAT_DESCRIPTION}`, local: 'Your video stays on this device.',
+  remove: 'Remove file', start: 'Start analysis', invalid: `Select one non-empty video file (${VIDEO_FORMAT_DESCRIPTION}).`,
   ready: 'Ready for analysis', demo: 'Demo mode', demoNotice: 'Simulated processing and sample results. No AI analysis is performed.',
   scenario: 'Demo result', withEvents: 'Potential violations', noEvents: 'No violations',
   upload: 'Upload', processingTitle: 'Previewing analysis', processingSubtitle: 'This demo walks through the analysis workflow.',
@@ -24,7 +25,7 @@ const en = {
   explanationOne: 'Example scenario: cash remains on the counter after the operator leaves the workstation. Review the relevant video segment.',
   explanationTwo: 'Example scenario: cash is placed outside the designated counting area. Review the handling procedure and context.',
   clearTitle: 'No events to review', clearDescription: 'This demo scenario contains no potential violations.',
-  playbackError: 'This MOV encoding cannot be played in this browser. Try a MOV file encoded with H.264.',
+  playbackError: 'This video cannot be played in this browser. Its format or codec may be unsupported, or the file may be damaged. AVI, MKV, and some MOV files may require local conversion. Try an MP4 encoded with H.264. No automatic conversion is available.',
   seekNote: 'Demo timestamps are adjusted to the available video duration.',
 };
 
@@ -34,8 +35,8 @@ const ru: Messages = {
   language: 'Язык интерфейса', lightTheme: 'Включить светлую тему', darkTheme: 'Включить тёмную тему',
   uploadTitle: 'Загрузите видео', uploadSubtitle: 'Выберите запись для проверки операций с наличными.',
   drop: 'Перетащите видео сюда', or: 'или выберите файл на устройстве', choose: 'Выбрать файл',
-  supported: 'Поддерживаемый формат: .mov', local: 'Видео остаётся на вашем устройстве.',
-  remove: 'Удалить файл', start: 'Начать анализ', invalid: 'Выберите один непустой видеофайл .mov.',
+  video: 'Видео', supported: `Поддерживаемые форматы: ${VIDEO_FORMAT_DESCRIPTION}`, local: 'Видео остаётся на вашем устройстве.',
+  remove: 'Удалить файл', start: 'Начать анализ', invalid: `Выберите один непустой видеофайл (${VIDEO_FORMAT_DESCRIPTION}).`,
   ready: 'Готово к анализу', demo: 'Деморежим', demoNotice: 'Имитация обработки и примеры результатов. ИИ-анализ не выполняется.',
   scenario: 'Демо-результат', withEvents: 'Возможные нарушения', noEvents: 'Без нарушений',
   upload: 'Загрузка', processingTitle: 'Предпросмотр анализа', processingSubtitle: 'Демонстрация этапов обработки видео.',
@@ -53,7 +54,7 @@ const ru: Messages = {
   explanationOne: 'Пример ситуации: наличные остаются на стойке после ухода сотрудника с рабочего места. Проверьте соответствующий фрагмент видео.',
   explanationTwo: 'Пример ситуации: наличные размещены вне выделенной зоны пересчёта. Проверьте порядок работы и контекст события.',
   clearTitle: 'Нет событий для проверки', clearDescription: 'В этом демо-сценарии возможные нарушения отсутствуют.',
-  playbackError: 'Браузер не поддерживает кодировку этого MOV. Попробуйте MOV-файл с кодеком H.264.',
+  playbackError: 'Не удалось воспроизвести видео в браузере. Возможно, формат или кодек не поддерживается либо файл повреждён. AVI, MKV и некоторые MOV могут требовать локальной конвертации. Попробуйте MP4 с кодеком H.264. Автоматическая конвертация недоступна.',
   seekNote: 'Демонстрационные отметки времени адаптированы к длительности видео.',
 };
 
@@ -62,8 +63,8 @@ const kk: Messages = {
   language: 'Интерфейс тілі', lightTheme: 'Ашық тақырыпқа ауысу', darkTheme: 'Қараңғы тақырыпқа ауысу',
   uploadTitle: 'Бейнені жүктеңіз', uploadSubtitle: 'Қолма-қол ақшамен жасалатын операцияларды тексеру үшін жазбаны таңдаңыз.',
   drop: 'Бейнені осында сүйреп әкеліңіз', or: 'немесе құрылғыдан файл таңдаңыз', choose: 'Файлды таңдау',
-  supported: 'Қолдау көрсетілетін пішім: .mov', local: 'Бейне құрылғыңызда қалады.',
-  remove: 'Файлды жою', start: 'Талдауды бастау', invalid: 'Бос емес бір .mov бейнефайлын таңдаңыз.',
+  video: 'Бейне', supported: `Қолдау көрсетілетін пішімдер: ${VIDEO_FORMAT_DESCRIPTION}`, local: 'Бейне құрылғыңызда қалады.',
+  remove: 'Файлды жою', start: 'Талдауды бастау', invalid: `Бос емес бір бейнефайлды таңдаңыз (${VIDEO_FORMAT_DESCRIPTION}).`,
   ready: 'Талдауға дайын', demo: 'Демо режим', demoNotice: 'Өңдеу имитациясы және нәтиже үлгілері. ЖИ талдауы орындалмайды.',
   scenario: 'Демо нәтижесі', withEvents: 'Ықтимал бұзушылықтар', noEvents: 'Бұзушылықтарсыз',
   upload: 'Жүктеу', processingTitle: 'Талдауды алдын ала қарау', processingSubtitle: 'Бейнені өңдеу кезеңдерінің көрсетілімі.',
@@ -81,7 +82,7 @@ const kk: Messages = {
   explanationOne: 'Жағдай үлгісі: қызметкер жұмыс орнынан кеткеннен кейін қолма-қол ақша үстелде қалады. Бейненің тиісті бөлігін тексеріңіз.',
   explanationTwo: 'Жағдай үлгісі: қолма-қол ақша санауға арналған аймақтан тыс қойылған. Жұмыс тәртібін және оқиға мәнмәтінін тексеріңіз.',
   clearTitle: 'Тексерілетін оқиғалар жоқ', clearDescription: 'Бұл демо сценарийде ықтимал бұзушылықтар жоқ.',
-  playbackError: 'Браузер осы MOV кодтауын қолдамайды. H.264 кодегі бар MOV файлын қолданып көріңіз.',
+  playbackError: 'Браузерде бейнені ойнату мүмкін болмады. Пішімге немесе кодекке қолдау көрсетілмеуі не файл зақымдалуы мүмкін. AVI, MKV және кейбір MOV файлдарын жергілікті түрлендіру қажет болуы мүмкін. H.264 кодегі бар MP4 файлын қолданып көріңіз. Автоматты түрлендіру қолжетімсіз.',
   seekNote: 'Демо уақыт белгілері бейненің ұзақтығына бейімделген.',
 };
 
