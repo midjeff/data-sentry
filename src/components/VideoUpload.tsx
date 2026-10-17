@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { ArrowRight, Check, FileVideo, FlaskConical, LockKeyhole, UploadCloud, X } from 'lucide-react';
 import { useI18n } from '../i18n';
-import { isSupportedVideo, VIDEO_ACCEPT, videoFormatLabel } from '../videoFormats';
+import { isSupportedVideo, VIDEO_ACCEPT } from '../videoFormats';
 
 export function DemoNotice({ results = false }: { results?: boolean }) {
   const { t } = useI18n();
