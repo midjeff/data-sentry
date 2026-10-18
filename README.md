@@ -23,7 +23,7 @@ npm run preview
 - Russian is the default; Kazakh and English are available immediately through the header selector. Translation keys are checked by TypeScript in `src/i18n.tsx`.
 - The theme follows the system until a manual preference is saved in localStorage.
 - Select or drop one non-empty `.mov`, `.mp4`, `.avi`, `.mkv`, or `.webm` file, select a demo verdict, then click Start Analysis. Extensions are case-insensitive. Selecting a file never starts processing.
-- The three processing stages are timed demonstrations. Cancel returns to the selected file. Results navigation stays disabled until processing finishes.
+- Demo batches use a cancellable asynchronous queue, sequentially. Each video has a six-second simulated scan. The demo checks local file readability and returns the existing illustrative scenario; it does not perform inference. The first completed result opens immediately; later completions preserve the selected video. Navigation does not cancel active jobs; use Cancel to stop them.
 - Videos use local object URLs, which are released when replaced or removed. No video or frame is transmitted to a service.
 - Event buttons update the details and seek the local player. Sample timestamps adapt to short videos. Playback uses native browser controls.
 - Evidence is a clearly labeled schematic placeholder. Click it to open a native modal dialog; close with the close button, the backdrop, or Escape.
@@ -62,3 +62,20 @@ The production build and TypeScript checks pass. DOM smoke checks covered all th
 Multi-format checks used locally generated MOV, MP4, AVI, MKV, and WebM samples verified with ffprobe. DOM tests passed for selection and drag-and-drop of all five, uppercase extensions, rejection of empty/unsupported/multiple files, dynamic format labels, and simulated metadata, playback-error, and recovery events. Error translations were checked in Russian, Kazakh, and English. These tests do not establish browser codec support or backend processing support.
 
 No connected browser was available for visual review, responsive viewport inspection, native dialog keyboard behavior, or actual video decoding. Those checks remain manual; DOM checks do not substitute for browser playback testing.
+
+## Incremental demo scanning
+
+Analysis intentionally uses local demo data; no AI model or external API is connected.
+`src/analysis.ts` reads the local file and simulates a cancellable six-second scan
+per video, then returns the selected sample scenario. Videos are queued sequentially.
+The first completed video opens immediately while the remaining videos continue in
+the background. Later completions never replace the selected result. Pending and
+processing videos cannot be opened. Cancel clears the active timer and stops the queue.
+Uploads and completed history are preserved.
+
+The existing animated CCTV scanner is shown before the first result. Demo badges,
+notices, example violations, event seeking, and collapsible details remain in place.
+Development logs report demo duration only, never model inference time.
+
+The browser queue runs only while the page is open; it does not survive a reload.
+Run regression tests with `node --test tests/batch.test.mjs`.
