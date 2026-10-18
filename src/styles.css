@@ -186,6 +186,11 @@ h2 { font-size: 16px; font-weight: 600; line-height: 1.5; }
 .history-open span { display: block; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-size: 13px; }
 .history-open small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
 .history-delete { width: 30px; margin-right: 3px; }
+.history-action { border: 0; background: transparent; color: var(--accent-text); padding: 8px 12px; font: inherit; font-size: 12px; }
+.history-action:disabled { opacity: .45; }
+.history-pagination { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 12px; color: var(--muted); }
+.evidence-frames { display: flex; flex-wrap: wrap; gap: 10px; }
+.regulation dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .request-field { display: grid; gap: 8px; margin-top: 20px; font-size: 13px; }
 .request-field textarea { width: 100%; resize: vertical; min-height: 85px; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
 .request-field textarea:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }

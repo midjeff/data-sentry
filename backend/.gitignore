@@ -1,0 +1,16 @@
+.venv/
+.bootstrap/
+.python/
+.uv-cache/
+data/
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+*.egg-info/
+*.sqlite3*
+*.log
+weights/
+*.safetensors
+*.pt

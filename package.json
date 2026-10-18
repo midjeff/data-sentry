@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:integration": "backend\\.venv\\Scripts\\python.exe tests\\network_smoke.py",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,6 +21,8 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "0.28.2",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4.1.0",
     "typescript": "~5.9.3",
     "vite": "^7.0.0"

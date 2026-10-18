@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, FileCheck, Moon, PanelLeftClose, PanelLeftOpen, ScanLine, Sun, Trash2 } from 'lucide-react';
-import { useI18n, type Language } from '../i18n';
+import { ChevronDown, FileCheck, Moon, PanelLeftClose, PanelLeftOpen, ScanLine, Sun } from 'lucide-react';
+import { errorMessageKey, useI18n, type Language } from '../i18n';
 
-import type { AnalysisRecord } from '../history';
+import type { JobSummary } from '../api';
 
 export type View = 'analysis' | 'results';
 
@@ -90,7 +90,13 @@ export function Header({ sidebarOpen, onToggleSidebar }: { sidebarOpen: boolean;
   </header>;
 }
 
-export function Navigation({ view, onNavigate, hasResults, mobile = false, hidden = false, history = [], activeId, onOpenHistory, onDeleteHistory }: { view: View; onNavigate: (view: View) => void; hasResults: boolean; mobile?: boolean; hidden?: boolean; history?: AnalysisRecord[]; activeId?: string | null; onOpenHistory?: (record: AnalysisRecord) => void; onDeleteHistory?: (record: AnalysisRecord) => void }) {
+export function Navigation({ view, onNavigate, hasResults, mobile = false, hidden = false, history = [], activeId, onOpenHistory,
+  loading = false, error, offset = 0, total = 0, limit = 20, onPage, onRefresh }: {
+  view: View; onNavigate: (view: View) => void; hasResults: boolean; mobile?: boolean; hidden?: boolean;
+  history?: JobSummary[]; activeId?: string | null; onOpenHistory?: (record: JobSummary) => void;
+  loading?: boolean; error?: string | null; offset?: number; total?: number; limit?: number;
+  onPage?: (offset: number) => void; onRefresh?: () => void;
+}) {
   const { t, language } = useI18n();
   return <nav id={mobile ? undefined : 'sidebar-navigation'} hidden={hidden} className={mobile ? 'mobile-navigation' : 'sidebar'}>
     <button className={`nav-item ${view === 'analysis' ? 'is-active' : ''}`} onClick={() => onNavigate('analysis')} aria-current={view === 'analysis' ? 'page' : undefined}>
@@ -101,13 +107,19 @@ export function Navigation({ view, onNavigate, hasResults, mobile = false, hidde
     </button>
     {!mobile && <section className="analysis-history" aria-label={t('history')}>
       <h2>{t('history')}</h2>
-      {history.length === 0 && <p className="history-empty">{t('historyEmpty')}</p>}
+      <button className="history-action" disabled={loading} onClick={onRefresh}>{t('refreshHistory')}</button>
+      {loading && <p className="history-empty" role="status">{t('loading')}</p>}
+      {error && <p className="error-message" role="alert">{t(errorMessageKey(error))}</p>}
+      {!loading && !error && history.length === 0 && <p className="history-empty">{t('historyEmpty')}</p>}
       <div className="history-list">{history.map((record) => <div key={record.id} className={`history-row ${view === 'results' && activeId === record.id ? 'is-active' : ''}`}>
-        <button className="history-open" onClick={() => onOpenHistory?.(record)} aria-current={view === 'results' && activeId === record.id ? 'true' : undefined} title={record.file.name}>
-          <span>{record.file.name}</span><small>{new Date(record.createdAt).toLocaleString(language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+        <button className="history-open" onClick={() => onOpenHistory?.(record)} aria-current={view === 'results' && activeId === record.id ? 'true' : undefined} title={record.filename}>
+          <span>{record.filename}</span><small>{new Date(record.createdAt).toLocaleString(language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+          <small>{t(record.status === 'done' ? 'completed' : record.status === 'failed' ? 'analysisFailed' : 'active')}{record.isDemo ? ` · ${t('demo')}` : ''}</small>
         </button>
-        <button className="icon-button history-delete" aria-label={`${t('deleteAnalysis')}: ${record.file.name}`} title={t('deleteAnalysis')} onClick={() => onDeleteHistory?.(record)}><Trash2 size={15} /></button>
       </div>)}</div>
+      {total > limit && <div className="history-pagination"><button className="history-action" disabled={loading || offset === 0} onClick={() => onPage?.(Math.max(0, offset - limit))}>{t('previousPage')}</button>
+        <span>{Math.floor(offset / limit) + 1} / {Math.ceil(total / limit)}</span>
+        <button className="history-action" disabled={loading || offset + limit >= total} onClick={() => onPage?.(offset + limit)}>{t('nextPage')}</button></div>}
     </section>}
   </nav>;
 }

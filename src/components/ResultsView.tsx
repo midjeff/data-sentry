@@ -1,73 +1,103 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, CheckCircle2, ChevronRight, FileText, Maximize2, TriangleAlert, X } from 'lucide-react';
-import { useI18n, type MessageKey } from '../i18n';
+import { useI18n } from '../i18n';
 import { DemoNotice } from './VideoUpload';
 import { videoFormatLabel } from '../videoFormats';
+import { videoUrl, type Evidence, type Job, type Violation } from '../api';
 
-type DemoEvent = { id: string; type: MessageKey; explanation: MessageKey; time: number };
-const demoEvents: DemoEvent[] = [
-  { id: 'unattended', type: 'eventOne', explanation: 'explanationOne', time: 12 },
-  { id: 'outside-area', type: 'eventTwo', explanation: 'explanationTwo', time: 28 },
-];
-
-function formatTime(seconds: number) {
-  return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+export function formatTime(seconds: number) {
+  const [whole, fraction] = (seconds % 60).toFixed(3).split('.');
+  const decimals = fraction.replace(/0+$/, '');
+  return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${whole.padStart(2, '0')}${decimals ? `.${decimals}` : ''}`;
 }
 
-function EvidenceGallery({ timestamp }: { timestamp: number }) {
+function EvidenceGallery({ frames }: { frames: Evidence[] }) {
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const [selected, setSelected] = useState<Evidence | null>(null);
+  const [unavailable, setUnavailable] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (selected && dialog.current && !dialog.current.open) {
+      dialog.current.showModal(); closeButton.current?.focus();
+    }
+  }, [selected]);
+  const failed = (id: string) => setUnavailable(previous => new Set([...previous, id]));
   return <div className="evidence-gallery">
     <h3>{t('evidence')}</h3>
-    <button className="evidence-thumbnail" aria-label={t('enlarge')} onClick={() => { dialog.current?.showModal(); closeButton.current?.focus(); }}>
-      <img src="/demo-frame.svg" alt={t('frame')} /><span className="evidence-time">{formatTime(timestamp)}</span><span className="enlarge-icon"><Maximize2 size={14} /></span>
-    </button>
+    <div className="evidence-frames">{frames.map(frame => unavailable.has(frame.id)
+      ? <p key={frame.id} className="helper-text" role="status">{t('evidenceUnavailable')} · {formatTime(frame.timestamp)}</p>
+      : <button key={frame.id} className="evidence-thumbnail" aria-label={`${t('enlarge')} ${formatTime(frame.timestamp)}`} onClick={() => setSelected(frame)}>
+        <img src={frame.url} alt={`${t('frame')} ${formatTime(frame.timestamp)}`} onError={() => failed(frame.id)} />
+        <span className="evidence-time">{formatTime(frame.timestamp)}</span><Maximize2 className="enlarge-icon" size={20} />
+      </button>)}</div>
     <p className="helper-text">{t('evidenceNote')}</p>
-    <dialog ref={dialog} className="evidence-dialog" aria-labelledby="evidence-dialog-title" onClick={(e) => { if (e.target === e.currentTarget) dialog.current?.close(); }}>
-      <div className="dialog-heading"><h2 id="evidence-dialog-title">{t('frame')} · {formatTime(timestamp)}</h2><button ref={closeButton} className="icon-button" aria-label={t('close')} onClick={() => dialog.current?.close()}><X size={20} /></button></div>
-      <img src="/demo-frame.svg" alt={t('frame')} /><p>{t('evidenceNote')}</p>
+    <dialog ref={dialog} className="evidence-dialog" aria-labelledby="evidence-dialog-title" onClose={() => setSelected(null)}
+      onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
+      <div className="dialog-heading"><h2 id="evidence-dialog-title">{t('frame')} · {selected ? formatTime(selected.timestamp) : ''}</h2>
+        <button ref={closeButton} className="icon-button" aria-label={t('close')} onClick={() => dialog.current?.close()}><X size={20} /></button></div>
+      {selected && (unavailable.has(selected.id) ? <p role="status">{t('evidenceUnavailable')}</p> :
+        <img src={selected.url} alt={t('frame')} onError={() => failed(selected.id)} />)}
     </dialog>
   </div>;
 }
 
-function ViolationDetails({ event }: { event: DemoEvent }) {
+function ViolationDetails({ event }: { event: Violation }) {
   const { t } = useI18n();
-  return <section className="violation-details" aria-labelledby="detail-title">
-    <h2 id="detail-title">{t('details')}</h2>
-    <dl><div><dt>{t('violationType')}</dt><dd>{t(event.type)}</dd></div><div><dt>{t('timestamp')}</dt><dd className="tabular-nums">{formatTime(event.time)}</dd></div><div><dt>{t('explanation')}</dt><dd className="explanation">{t(event.explanation)}</dd></div></dl>
-    <EvidenceGallery timestamp={event.time} />
-    <div className="regulation"><h3><FileText size={15} />{t('regulation')}</h3><p>{t('reference')}</p><span className="helper-text">{t('referenceNote')}</span></div>
+  return <section className="violation-details"><h2>{t('details')}</h2>
+    <dl><div><dt>{t('violationType')}</dt><dd>{event.type}</dd></div>
+      <div><dt>{t('timestamp')}</dt><dd className="tabular-nums">{formatTime(event.timestamp)}</dd></div>
+      <div><dt>{t('explanation')}</dt><dd className="explanation">{event.description}</dd></div></dl>
+    <EvidenceGallery key={event.evidence.map(frame => frame.id).join('-')} frames={event.evidence} />
+    {event.regulatoryReferences.length > 0 && <div className="regulation"><h3><FileText size={15} />{t('regulation')}</h3>
+      {event.regulatoryReferences.map((reference, index) => <dl key={index}>{Object.entries(reference).map(([key, value]) =>
+        <div key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl>)}</div>}
   </section>;
 }
 
-export function ResultsView({ file, url, scenario, onNew }: { file: File; url: string; scenario: 'flagged' | 'clear'; onNew: () => void }) {
+export function ResultsView({ job, onNew }: { job: Job & { status: 'done' }; onNew: () => void }) {
   const { t } = useI18n();
   const video = useRef<HTMLVideoElement>(null);
-  const [duration, setDuration] = useState<number | null>(null);
-  const [selected, setSelected] = useState(demoEvents[0].id);
+  const [metadataReady, setMetadataReady] = useState(false);
+  const [selected, setSelected] = useState(0);
   const [playbackError, setPlaybackError] = useState(false);
-  const [pendingSeek, setPendingSeek] = useState<string | null>(null);
-  const flagged = scenario === 'flagged';
-  const events = demoEvents.map((event, index) => ({ ...event, time: duration !== null ? Math.min(event.time, Math.floor(duration * (index === 0 ? 0.25 : 0.65))) : event.time }));
-  const current = events.find((event) => event.id === selected) ?? events[0];
-  useEffect(() => {
-    if (pendingSeek !== null && duration !== null && video.current) {
-      const index = demoEvents.findIndex((event) => event.id === pendingSeek);
-      video.current.currentTime = Math.min(demoEvents[index].time, Math.floor(duration * (index === 0 ? 0.25 : 0.65)));
-      setPendingSeek(null);
-    }
-  }, [duration, pendingSeek]);
-  const choose = (event: DemoEvent) => {
-    setSelected(event.id);
-    if (video.current && duration !== null) video.current.currentTime = event.time;
-    else setPendingSeek(event.id);
+  const pendingSeek = useRef<number | null>(null);
+  const { result } = job;
+  const flagged = result.verdict === 'violation';
+  const current = result.violations[selected];
+  const seek = (timestamp: number) => {
+    if (metadataReady && video.current) { video.current.currentTime = timestamp; pendingSeek.current = null; }
+    else pendingSeek.current = timestamp;
   };
+  const choose = (index: number) => { setSelected(index); seek(result.violations[index].timestamp); };
   return <section className="results-content">
-    <div className="page-heading results-heading"><div><h1>{t('results')}</h1><p>{t('resultSubtitle')}</p></div><button className="button button-secondary" onClick={onNew}><ArrowLeft size={16} />{t('newAnalysis')}</button></div>
-    <div className={`verdict ${flagged ? 'flagged' : 'clear'}`} role="status">{flagged ? <TriangleAlert size={19} /> : <CheckCircle2 size={19} />}<strong>{t(flagged ? 'verdictFlagged' : 'verdictClear')}</strong><span className="demo-pill">{t('demo')}</span></div>
-    <div className="results-grid"><div className="video-column"><div className="panel video-panel"><div className="panel-title"><h2>{t('recording')}</h2><span className="format-tag">{videoFormatLabel(file)}</span></div><video key={url} ref={video} src={url} controls playsInline preload="metadata" aria-label={t('recording')} onKeyDown={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); const player = e.currentTarget; if (Number.isFinite(player.duration)) player.currentTime = Math.max(0, Math.min(player.duration, player.currentTime + (e.key === 'ArrowRight' ? 5 : -5))); } }} onLoadedMetadata={(e) => { const value = e.currentTarget.duration; if (Number.isFinite(value)) setDuration(value); }} onLoadedData={() => setPlaybackError(false)} onError={() => setPlaybackError(true)} />{playbackError && <p className="playback-error" role="alert">{t('playbackError')}</p>}<div className="video-footer"><span title={file.name}>{file.name}</span><span className="tabular-nums">{duration !== null ? formatTime(duration) : '—'}</span></div></div><p className="helper-text mt-3">{t('seekNote')}</p><DemoNotice results /></div>
-      <div className="panel events-panel">{flagged ? <><section className="violations-list"><div className="panel-title"><h2>{t('events')}</h2><span className="count-badge">{events.length}</span></div><div className="event-buttons">{events.map((event) => <button key={event.id} className={`event-button ${selected === event.id ? 'selected' : ''}`} aria-pressed={selected === event.id} onClick={() => choose(event)}><span className="event-dot" /><span className="flex-1">{t(event.type)}</span><span className="event-time">{formatTime(event.time)}</span><ChevronRight size={15} className="shrink-0" /></button>)}</div></section><ViolationDetails event={current} /></> : <div className="empty-results"><div className="clear-symbol"><Check size={25} /></div><h2>{t('clearTitle')}</h2><p>{t('clearDescription')}</p><span className="demo-pill">{t('demo')}</span></div>}</div>
+    <div className="page-heading results-heading"><div><h1>{t('results')}</h1><p>{t('resultSubtitle')}</p></div>
+      <button className="button button-secondary" onClick={onNew}><ArrowLeft size={16} />{t('newAnalysis')}</button></div>
+    <div className={`verdict ${flagged ? 'flagged' : 'clear'}`} role="status">
+      {flagged ? <TriangleAlert size={19} /> : <CheckCircle2 size={19} />}<strong>{t(flagged ? 'verdictFlagged' : 'verdictClear')}</strong>
+      {job.isDemo && <span className="demo-pill">{t('demo')}</span>}
     </div>
+    <div className="results-grid"><div className="video-column"><div className="panel video-panel">
+      <div className="panel-title"><h2>{t('recording')}</h2><span className="format-tag">{videoFormatLabel({ name: job.filename })}</span></div>
+      <video ref={video} src={videoUrl(job.id)} controls playsInline preload="metadata" aria-label={t('recording')}
+        onKeyDown={event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+          event.preventDefault(); const player = event.currentTarget;
+          if (Number.isFinite(player.duration)) player.currentTime = Math.max(0, Math.min(player.duration, player.currentTime + (event.key === 'ArrowLeft' ? -5 : 5)));
+        } }}
+        onLoadedMetadata={() => { setMetadataReady(true); if (pendingSeek.current !== null && video.current) {
+          video.current.currentTime = pendingSeek.current; pendingSeek.current = null;
+        } }}
+        onLoadedData={() => setPlaybackError(false)} onError={() => setPlaybackError(true)} />
+      {playbackError && <p className="playback-error" role="alert">{t('playbackError')}</p>}
+      <div className="video-footer"><span title={job.filename}>{job.filename}</span><span className="tabular-nums">{formatTime(result.duration)}</span></div>
+    </div><p className="helper-text mt-3">{t('seekNote')}</p>{job.isDemo && <DemoNotice results />}</div>
+    <div className="panel events-panel">{flagged ? <>
+      <section className="violations-list"><div className="panel-title"><h2>{t('events')}</h2><span className="count-badge">{result.violations.length}</span></div>
+        <div className="event-buttons">{result.violations.map((event, index) => <button key={index}
+          className={`event-button ${selected === index ? 'selected' : ''}`} aria-pressed={selected === index} onClick={() => choose(index)}>
+          <span className="event-dot" /><span className="flex-1">{event.type}</span><span className="event-time">{formatTime(event.timestamp)}</span><ChevronRight size={16} /></button>)}</div>
+      </section><ViolationDetails event={current} />
+    </> : <div className="empty-results"><div className="clear-symbol"><Check size={25} /></div><h2>{t('clearTitle')}</h2>
+      <p>{t('clearDescription')}</p>{job.isDemo && <span className="demo-pill">{t('demo')}</span>}</div>}</div></div>
   </section>;
 }
