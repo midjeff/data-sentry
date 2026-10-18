@@ -1,6 +1,9 @@
 import json
+from pathlib import Path
+import runpy
 
 import pytest
+from fastapi.testclient import TestClient
 
 from sentry.config import Settings
 
@@ -83,3 +86,32 @@ def test_production_and_preview_never_enable_mock(monkeypatch):
         monkeypatch.setenv('VERCEL_ENV', environment)
         with pytest.raises(ValueError):
             Settings.for_vercel()
+
+
+@pytest.mark.parametrize('configured,platform_domain', [
+    ('["http://localhost:5173"]', 'data-sentry-ai.vercel.app'),
+    ('["https://data-sentry-ai.vercel.app"]', None),
+    ('"https://data-sentry-ai.vercel.app"', 'data-sentry-ai.vercel.app'),
+])
+def test_production_entrypoint_origin_conflict_and_configuration_recovery(monkeypatch, configured, platform_domain):
+    # Reproduce the supplied Vercel traceback at import, before any DB/storage I/O.
+    monkeypatch.setenv('VERCEL_ENV', 'production')
+    monkeypatch.setenv('ALLOWED_ORIGINS', configured)
+    if platform_domain:
+        monkeypatch.setenv('VERCEL_PROJECT_PRODUCTION_URL', platform_domain)
+    monkeypatch.setattr('psycopg.connect', lambda *_args, **_kwargs: pytest.fail('Unexpected DB I/O'))
+    monkeypatch.setattr('sentry.cloud_storage.CloudStorage.signing_request',
+                        lambda *_args: pytest.fail('Unexpected storage I/O'))
+    entrypoint = str(Path(__file__).parents[1] / 'main.py')
+    with pytest.raises(ValueError, match='Hosted ALLOWED_ORIGINS may only restrict'):
+        runpy.run_path(entrypoint)
+    # Dashboard remedy: restore platform variables and remove the conflicting
+    # optional override. No security bypass or request-derived origin is needed.
+    monkeypatch.setenv('VERCEL_PROJECT_PRODUCTION_URL', 'data-sentry-ai.vercel.app')
+    monkeypatch.delenv('ALLOWED_ORIGINS')
+    app = runpy.run_path(entrypoint)['app']
+    assert app.state.settings.allowed_origins == ['https://data-sentry-ai.vercel.app']
+    assert app.state.settings.cookie_secure
+    with TestClient(app) as client:
+        assert client.get('/api/health/live').status_code == 200
+        assert client.post('/api/ui/session', headers={'Origin': 'https://unrelated.vercel.app'}).status_code == 403

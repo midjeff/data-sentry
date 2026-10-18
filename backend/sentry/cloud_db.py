@@ -4,12 +4,31 @@ The short write transactions share an advisory lock so capacity checks and legac
 state transitions remain atomic across instances. Media work never holds it.
 """
 from contextlib import contextmanager
+import logging
 from pathlib import Path
 import time
 import uuid
 
 from .db import Database
 from .errors import SentryError
+
+log = logging.getLogger(__name__)
+
+
+def database_error_reason(error):
+    # Fixed labels only. Exception messages can include credentials, SQL and rows.
+    state = error.sqlstate or ''
+    if state == '42P01':
+        return 'DATABASE_SCHEMA_MISSING'
+    if state == '42703':
+        return 'DATABASE_SCHEMA_INCOMPLETE'
+    if state.startswith('28'):
+        return 'DATABASE_AUTH_FAILED'
+    if state == '42501':
+        return 'DATABASE_PERMISSION_DENIED'
+    if state.startswith('08'):
+        return 'DATABASE_CONNECTION_FAILED'
+    return 'DATABASE_OPERATION_FAILED'
 
 
 class Row(dict):
@@ -40,12 +59,17 @@ class CloudDatabase(Database):
         import psycopg
         url = self.settings.database_url.get_secret_value()
         if not url:
-            raise SentryError('ARTIFACT_UNAVAILABLE', 503)
-        with psycopg.connect(url, row_factory=row_factory, connect_timeout=10,
-                             prepare_threshold=None) as connection:
-            if write:
-                connection.execute('SELECT pg_advisory_xact_lock(84721301)')
-            yield Connection(connection)
+            log.error('database_unavailable reason=DATABASE_URL_MISSING')
+            raise SentryError('DATABASE_UNAVAILABLE', 503)
+        try:
+            with psycopg.connect(url, row_factory=row_factory, connect_timeout=10,
+                                 prepare_threshold=None) as connection:
+                if write:
+                    connection.execute('SELECT pg_advisory_xact_lock(84721301)')
+                yield Connection(connection)
+        except psycopg.Error as error:
+            log.error('database_unavailable reason=%s', database_error_reason(error))
+            raise SentryError('DATABASE_UNAVAILABLE', 503) from None
 
     def migrate(self):
         with self.connect(True) as db:

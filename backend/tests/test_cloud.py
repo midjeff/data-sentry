@@ -58,7 +58,7 @@ def postgres_url(tmp_path_factory):
 
 
 @pytest.fixture
-def cloud(postgres_url, tmp_path):
+def unmigrated_cloud(postgres_url, tmp_path):
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
@@ -69,10 +69,81 @@ def cloud(postgres_url, tmp_path):
                         database_url=make_conninfo(postgres_url, options=f'-c search_path={schema}'),
                         pipeline_mode='disabled', job_timeout_sec=120)
     db = CloudDatabase(settings)
-    db.migrate()
     yield settings, db
     with psycopg.connect(postgres_url) as connection:
         connection.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+
+
+@pytest.fixture
+def cloud(unmigrated_cloud):
+    settings, db = unmigrated_cloud
+    db.migrate()
+    return settings, db
+
+
+def test_session_missing_database_url_reports_database_failure(tmp_path, caplog, monkeypatch):
+    settings = Settings(_env_file=None, storage_backend='vercel', database_url='', data_dir=tmp_path)
+    monkeypatch.setattr('psycopg.connect', lambda *_args, **_kwargs: pytest.fail('Connected without DATABASE_URL'))
+    monkeypatch.setattr(CloudStorage, 'signing_request', lambda *_: pytest.fail('Session contacted Blob'))
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        assert client.get('/api/health/live').status_code == 200
+        assert client.post('/api/ui/session').status_code == 403
+        response = client.post('/api/ui/session', headers={'Origin': 'http://localhost:5173'})
+        assert response.status_code == 503
+        assert response.json()['error']['code'] == 'DATABASE_UNAVAILABLE'
+        assert 'set-cookie' not in response.headers
+        assert response.headers['cache-control'] == 'no-store'
+        assert 'DATABASE_URL_MISSING' in caplog.text
+
+
+def test_session_recovers_only_after_real_postgres_migration(unmigrated_cloud, caplog, monkeypatch):
+    settings, db = unmigrated_cloud
+    # Session creation needs neither Blob credentials nor the storage binding.
+    settings.storage_url = ''
+    monkeypatch.setattr(CloudStorage, 'signing_request', lambda *_: pytest.fail('Session contacted Blob'))
+    app = create_app(settings, db)
+    with TestClient(app, raise_server_exceptions=False) as client, TestClient(app) as other:
+        response = client.post('/api/ui/session', headers={'Origin': 'http://localhost:5173'})
+        assert response.status_code == 503
+        assert response.json()['error']['code'] == 'DATABASE_UNAVAILABLE'
+        assert 'DATABASE_SCHEMA_MISSING' in caplog.text
+        assert 'set-cookie' not in response.headers
+        db.migrate()
+        db.migrate()  # Reapplying the checked-in schema preserves existing data.
+        headers = browser_session(client)
+        batch = client.post('/api/ui/batches', headers=headers).json()['batch_id']
+        assert client.post('/api/ui/batches', headers={'Origin': 'http://localhost:5173'}).status_code == 403
+        browser_session(other)
+        assert other.get(f'/api/ui/batches/{batch}').status_code == 404
+        # Reuse the cookie, exercise SELECT + CSRF rotation, preserve ownership.
+        rotated = browser_session(client)
+        assert rotated['X-CSRF-Token'] != headers['X-CSRF-Token']
+        assert client.get(f'/api/ui/batches/{batch}').status_code == 200
+        assert client.post('/api/ui/batches', headers=headers).status_code == 403
+        assert client.post('/api/ui/batches', headers=rotated).status_code == 200
+
+
+@pytest.mark.parametrize('exception,reason', [
+    ('InvalidPassword', 'DATABASE_AUTH_FAILED'),
+    ('InsufficientPrivilege', 'DATABASE_PERMISSION_DENIED'),
+    ('UndefinedColumn', 'DATABASE_SCHEMA_INCOMPLETE'),
+    ('ConnectionFailure', 'DATABASE_CONNECTION_FAILED'),
+])
+def test_postgres_failure_diagnostics_do_not_leak_secrets(tmp_path, monkeypatch, caplog, exception, reason):
+    import psycopg.errors
+    secret = 'never-print-this-database-password'
+    settings = Settings(_env_file=None, storage_backend='vercel', data_dir=tmp_path,
+                        database_url=f'postgresql://test:{secret}@db.invalid/test')
+    def fail(*_args, **_kwargs):
+        raise getattr(psycopg.errors, exception)(f'private server detail {secret}')
+    monkeypatch.setattr('psycopg.connect', fail)
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        response = client.post('/api/ui/session', headers={'Origin': 'http://localhost:5173'})
+        assert response.status_code == 503
+        assert response.json()['error']['code'] == 'DATABASE_UNAVAILABLE'
+        assert reason in caplog.text
+        assert secret not in caplog.text + response.text
+        assert 'set-cookie' not in response.headers
 
 
 class MemoryBlob:

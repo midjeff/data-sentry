@@ -14,6 +14,126 @@ Credentials, hosted migrations and deployment checks remain outstanding.
 The Vercel entrypoint never reads the local `.env`; hosted CORS/CSRF origins are
 restricted to exact trusted deployment URLs, with localhost development-only.
 
+## Диагностика Production: создание сессии
+
+Путь `POST /api/ui/session`: проверка точного Origin → поиск существующей сессии
+по хешу cookie → INSERT новой сессии либо UPDATE хеша CSRF → выдача защищённой
+cookie. SQL выполняется через `CloudDatabase.connect()` и `DATABASE_URL`.
+`CloudStorage` создаётся без сетевых запросов; Blob, `STORAGE_URL`, очередь и ML
+не вызываются при создании сессии. Их настройка не исправляет ошибку Postgres.
+
+`main:app` вызывает `Settings.for_vercel()` при импорте, игнорирует локальный
+`.env` и выбирает Postgres. Подключение и миграция при импорте не выполняются.
+Поэтому успешная сборка и `/api/health/live` не подтверждают доступность БД.
+Ошибка конфигурации при импорте может остановить функцию ещё до обработки маршрута.
+
+Проверка публичного адреса `https://data-sentry-ai.vercel.app` 18.10.2026:
+frontend `/` вернул 200, но `/api/health/live` и `POST /api/ui/session` вернули
+500 с `x-vercel-error: FUNCTION_INVOCATION_FAILED`, без JSON приложения.
+Пример request ID для POST с корректным Origin:
+`fra1::zbnqv-1792347796579-f56872c8b849`.
+Это отличается от первоначально сообщённого `500 ARTIFACT_UNAVAILABLE`.
+
+**Причина подтверждена предоставленным runtime log** deployment
+`dpl_H73XqCfWS5HYJHqggFQe4rBLE4h2`: импорт `main.py:5` вызывает
+`Settings.for_vercel()` → `vercel_origins()` →
+`ValueError: Hosted ALLOWED_ORIGINS may only restrict the trusted Vercel origins`.
+Приложение завершается с кодом 1 ещё до создания FastAPI и подключения к Postgres.
+У `ALLOWED_ORIGINS` либо неверный JSON-тип, либо элементы вне списка platform origins
+(в том числе если platform variables отсутствуют). Лог доказывает конфликт
+конфигурации, но не раскрывает, какое именно значение его вызвало.
+Наличие `DATABASE_URL` и выполнение hosted-миграции этими логами не подтверждаются.
+
+**Минимальное исправление в Dashboard, без изменения правил CORS:** открыть
+проект `data-sentry` команды `midjeff` → Settings → Environment Variables,
+включить доступ к System Environment Variables, проверить наличие автоматического
+`VERCEL_PROJECT_PRODUCTION_URL`. Он должен соответствовать рабочему production-домену
+`data-sentry-ai.vercel.app`; если Vercel выбрал другой домен, сначала сверить Domains
+проекта и его привязку к Production. Не подменять системную переменную вручную.
+Убрать конфликтующий необязательный `ALLOWED_ORIGINS` **из области Production**
+(не заменять его пустой строкой или `[]`), сохранив Development-настройки.
+Приложение само получит точный HTTPS origin от Vercel. Либо оставить только
+корректный JSON-массив, являющийся подмножеством автоматического списка.
+После этого создать новый Production deployment через Redeploy и проверить liveness
+и session. Для устранения именно этого сбоя публикация локального кода не требуется.
+Удалять проверку origins, добавлять wildcard или разрешать любой переданный Host нельзя.
+
+Воспроизводимый локальный дефект: пустой `DATABASE_URL` раньше ошибочно давал
+`503 ARTIFACT_UNAVAILABLE`. Теперь ошибки Postgres возвращают
+`503 DATABASE_UNAVAILABLE`, не выдавая cookie при неудаче. В закрытые runtime logs
+пишется только фиксированная причина, без DSN, пароля, SQL, содержимого строк или
+текста исключения:
+
+| Причина в logs | Действие |
+| --- | --- |
+| `DATABASE_URL_MISSING` | Подключить Postgres к проекту и добавить предоставленный провайдером `DATABASE_URL` для Production |
+| `DATABASE_SCHEMA_MISSING` | Проверить базу/search_path и применить `sentry/cloud_schema.sql` к этой базе |
+| `DATABASE_SCHEMA_INCOMPLETE` | Сверить колонки с файлом схемы; `CREATE TABLE IF NOT EXISTS` не обновляет старые таблицы |
+| `DATABASE_AUTH_FAILED` | Проверить действительность учётных данных у провайдера и обновить Production secret |
+| `DATABASE_PERMISSION_DENIED` | Проверить права роли приложения на нужную схему и таблицы |
+| `DATABASE_CONNECTION_FAILED` | Проверить доступность Postgres, адрес подключения и требования TLS провайдера |
+| `DATABASE_OPERATION_FAILED` | Требуется дальнейшая диагностика БД; этот маркер не доказывает отсутствие миграции |
+
+Порядок проверки и исправления в Vercel Dashboard:
+
+1. Открыть проект → Deployments → активный Production deployment. Сверить Source
+   commit с нужным кодом, затем открыть Logs и найти запрос по request ID
+   либо пути `/api/ui/session`. Для `FUNCTION_INVOCATION_FAILED` нужен тип
+   исключения и traceback загрузки функции; не считать его доказательством ошибки БД.
+2. Проверить настройки проекта: Root Directory — корень репозитория; в исходниках
+   активного deployment корневой `vercel.json` содержит `app`, `backend`, `storage`,
+   `backend.root=backend`, `backend.entrypoint=main:app`; `/api/:path*` направлен в
+   `backend`, catch-all — в `app`. У `storage` нет публичного rewrite.
+3. Settings → Environment Variables → Production: проверить наличие **по именам**.
+   Для сессии нужен `DATABASE_URL` с настоящим Postgres DSN провайдера, а также
+   доступ к System Environment Variables и корректный
+   `VERCEL_PROJECT_PRODUCTION_URL`. `ALLOWED_ORIGINS` необязателен: если задан,
+   он может только сузить точный список доменов, полученный от Vercel. Не добавлять
+   wildcard/localhost в Production и не обходить валидацию Origin.
+4. `JURY_API_KEY` нужен jury API; `INTERNAL_SERVICE_TOKEN` — вызовам storage.
+   `STORAGE_URL` не задавать вручную: это runtime binding **на backend** к `storage`.
+   Blob credentials не нужны для сессии. Оставить `PIPELINE_MODE=disabled`;
+   запрет cloud uploads и serverless ML сохраняется.
+5. Если Postgres ещё не подключён, открыть Storage/Marketplace проекта, подключить
+   выбранный Postgres integration к Production и проверить, что его connection
+   string доступен backend именно как `DATABASE_URL`. Не подставлять URL Blob,
+   HTTP endpoint или выдуманный DSN. Значения секретов не публиковать в логах/чате.
+6. В SQL-консоли нужной Production БД проверить без чтения пользовательских данных:
+
+   ```sql
+   SELECT to_regclass('sessions') IS NOT NULL AS sessions_exists,
+          to_regclass('jobs') IS NOT NULL AS jobs_exists,
+          to_regclass('batches') IS NOT NULL AS batches_exists;
+   SELECT token_hash, csrf_hash, created_at, expires_at FROM sessions LIMIT 0;
+   ```
+
+   Проверять под ролью приложения и с тем же search_path. При отсутствующей схеме
+   в доверенном терминале с уже безопасно установленным Production `DATABASE_URL`
+   выполнить из `backend`: `.venv-cloud/Scripts/python.exe -m sentry.cloud_db`
+   (или `python -m sentry.cloud_db` в установленной Python 3.12 среде).
+   Команда явно изменяет выбранную БД; она не запускается автоматически при старте.
+   Альтернатива — выполнить проверенный `sentry/cloud_schema.sql` в SQL-консоли
+   провайдера с правами на создание схемы приложения. Затем повторить проверки.
+7. После исправления Production env создать новый Production deployment:
+   Deployments → текущий deployment → Redeploy. Если также нужны локальные улучшения
+   диагностики БД, сначала отдельно согласовать commit/push и выбрать этот SHA.
+   Перезапуск старого SHA не включает локальные изменения. Изменение env само по
+   себе не обновляет уже созданный deployment.
+8. Проверить `/api/health/live` (200); в браузере на production-домене вызвать
+   `POST /api/ui/session` (200, HttpOnly/Secure/SameSite cookie, CSRF в JSON), затем
+   `/api/ui/jobs` (200 с этой cookie). Без cookie history должен давать 401;
+   изменение данных без CSRF/с чужим Origin — 403. Не выводить cookie/CSRF в отчёт.
+   `/api/health/ready` продолжит давать 503, пока реальная обработка отключена.
+
+В рамках диагностики код не коммитился, не отправлялся и не развёртывался;
+hosted-миграция не выполнялась. Инфраструктурные тесты используют отдельный
+локальный PostgreSQL и не обращаются к Production данным.
+
+Справка: [Vercel runtime logs](https://vercel.com/docs/cli/logs),
+[environment variables](https://vercel.com/docs/environment-variables),
+[service bindings](https://vercel.com/docs/services/bindings),
+[FUNCTION_INVOCATION_FAILED](https://vercel.com/docs/errors/function_invocation_failed).
+
 Рабочий backend для локальной Windows-машины: FastAPI, SQLite-очередь, отдельный
 последовательный worker, приватная история браузера, проверка видео и извлечение JPEG.
 На Stage 1 React не менялся. В Stage 2 существующий frontend подключён к этому API:
