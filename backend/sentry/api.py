@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -81,9 +81,18 @@ class LimitedMultipartParser(MultiPartParser):
             raise
 
 
-def create_app(settings=None):
+def create_app(settings=None, database=None, storage=None, publisher=None):
     settings = settings or Settings()
-    db = Database(settings)
+    cloud = settings.storage_backend == 'vercel'
+    if cloud:
+        from .cloud_db import CloudDatabase
+        from .cloud_storage import CloudStorage, input_key, result_prefix
+        from .cloud_uploads import register_uploads, publish_job
+        db = database or CloudDatabase(settings)
+        storage = storage or CloudStorage(settings)
+        publisher = publisher or publish_job
+    else:
+        db = database or Database(settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -139,6 +148,17 @@ def create_app(settings=None):
                 raise SentryError("CSRF_REJECTED", 403)
         return session["token_hash"]
 
+    if cloud:
+        register_uploads(app, settings, db, storage, publisher, browser_auth)
+
+    @app.get('/api/health/live')
+    def public_live():
+        return {'api_running': True}
+
+    @app.get('/api/health/ready')
+    def public_ready():
+        return ready()
+
     @app.get("/health/live")
     def live():
         return {"api_running": True}
@@ -159,12 +179,16 @@ def create_app(settings=None):
         else:
             token = secrets.token_urlsafe(32)
             db.create_session(digest(token), digest(csrf))
-        response = JSONResponse({"csrf_token": csrf})
+        response = JSONResponse({"csrf_token": csrf, **({'upload_transport': 'blob'} if cloud else {})})
         response.set_cookie(COOKIE, token, max_age=settings.session_ttl_sec, httponly=True,
                             secure=settings.cookie_secure, samesite="lax", path="/api/ui")
         return response
 
     async def upload(request, channel, owner):
+        if cloud:
+            # Large bodies must bypass Functions; use the direct upload protocol.
+            require_processing(db, settings, channel)
+            raise SentryError('INVALID_UPLOAD', 422)
         batch_id = request.headers.get("X-Sentry-Batch") if channel == "ui" else None
         if batch_id and (len(batch_id) != 32 or not db.owns_batch(batch_id, owner)):
             raise SentryError("NOT_FOUND", 404)
@@ -321,6 +345,11 @@ def create_app(settings=None):
     def restore_job(job_id: str, request: Request):
         owner = browser_auth(request, mutate=True)
         job = owned_job(db, job_id, owner)
+        if cloud:
+            require_processing(db, settings, 'ui')
+            storage.head(input_key(job))
+            db.restore_cloud(job_id, owner, publisher)
+            return ui_response(settings, owned_job(db, job_id, owner), detail=True, storage=storage)
         path = job_dir(settings, job) / f'input{job["extension"]}'
         if not path.is_file() or not job["uploaded_at"]:
             raise SentryError("ARTIFACT_UNAVAILABLE", 409)
@@ -332,17 +361,34 @@ def create_app(settings=None):
     def delete_job(job_id: str, request: Request):
         owner = browser_auth(request, mutate=True)
         job = owned_job(db, job_id, owner)
-        db.delete_job(job_id, owner)
-        shutil.rmtree(job_dir(settings, job), ignore_errors=True)
+        if cloud:
+            # Retain the record on storage failure so deletion is retryable.
+            if job['status'] == 'processing' or job['worker_id'] is not None:
+                raise SentryError('JOB_BUSY', 409)
+            # Hold the write lock while deleting so restore cannot race cleanup.
+            with db.connect(True) as connection:
+                current = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+                if not current or current['status'] == 'processing' or current['worker_id'] is not None:
+                    raise SentryError('JOB_BUSY', 409)
+                storage.delete_job(job_id)
+                connection.execute('DELETE FROM jobs WHERE id=?', (job_id,))
+        else:
+            db.delete_job(job_id, owner)
+            shutil.rmtree(job_dir(settings, job), ignore_errors=True)
         return {"deleted": True}
 
     @app.get("/api/ui/jobs/{job_id}")
     def ui_job(job_id: str, request: Request):
-        return ui_response(settings, owned_job(db, job_id, browser_auth(request)), detail=True)
+        return ui_response(settings, owned_job(db, job_id, browser_auth(request)), detail=True, storage=storage)
 
     @app.get("/api/ui/jobs/{job_id}/video")
     def video(job_id: str, request: Request):
         job = owned_job(db, job_id, browser_auth(request))
+        if cloud:
+            if not job['uploaded_at']:
+                raise SentryError('NOT_FOUND', 404)
+            return RedirectResponse(storage.read_url(input_key(job)), status_code=307,
+                                    headers={'Referrer-Policy': 'no-referrer'})
         path = job_dir(settings, job) / f'input{job["extension"]}'
         if not job["uploaded_at"] or not path.is_file():
             raise SentryError("NOT_FOUND", 404)
@@ -353,9 +399,12 @@ def create_app(settings=None):
         job = owned_job(db, job_id, browser_auth(request))
         if job["status"] != "done":
             raise SentryError("NOT_FOUND", 404)
-        result = read_result(settings, job)
+        result = read_result(settings, job, storage)
         if frame_id not in {frame.frame_id for frames in result.evidence for frame in frames}:
             raise SentryError("NOT_FOUND", 404)
+        if cloud:
+            return RedirectResponse(storage.read_url(result_prefix(job) + f'/evidence/{frame_id}.jpg'),
+                                    status_code=307, headers={'Referrer-Policy': 'no-referrer'})
         return FileResponse(job_dir(settings, job) / "evidence" / f"{frame_id}.jpg", media_type="image/jpeg")
 
     return app

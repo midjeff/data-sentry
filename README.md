@@ -1,5 +1,162 @@
 # DATA Sentry
 
+## Vercel deployment
+
+The approved root `vercel.json` configures three services in one project:
+
+| Service | Root | Public access | Calls |
+| --- | --- | --- | --- |
+| `app` | `.` | `/` and other non-API paths | Browser calls relative `/api/ui/*` |
+| `backend` | `backend` | `/api/*`, including authenticated jury routes and `/api/health/*` | Internal `storage` through the injected `STORAGE_URL` binding |
+| `storage` | `services/storage` | None | Vercel Blob signing APIs |
+
+Paths are preserved by the public rewrites. Cookies, video URLs and evidence URLs
+remain under `/api/ui`. The static Vite frontend cannot consume runtime bindings.
+The localhost proxy in `vite.config.ts` is only for the existing standalone local
+workflow. `vercel dev` owns routing when running the project as services.
+
+**Deployment and real inference are not ready.** ForteBank requires local AI
+processing. Competition videos must not be uploaded to Vercel Blob until the
+data-locality architecture is explicitly approved. Both the backend Blob writer
+and the internal upload-token endpoint reject writes; changing environment
+variables cannot enable them. Cloud admission/readiness also fail closed.
+
+Real ML must execute on the local GPU computer, never in a Vercel Function.
+The private Queue subscriber only fences and rejects pending jobs with
+`ML_NOT_CONFIGURED`; it does not load models, download media or run FFmpeg.
+The authenticated connection to the GPU computer and its real adapter remain
+unimplemented. No hosted mock or jury mock is enabled.
+
+The Vercel entrypoint uses Postgres for sessions, ownership and job metadata.
+Private Blob read/signing support and the direct-upload protocol are retained as
+dormant infrastructure, pending the locality decision. The existing Windows/SQLite
+worker remains available for the separate local development workflow below.
+No competition data was uploaded and no hosted deployment was performed.
+
+Outstanding blockers: approval of cloud storage for video and derived artifacts
+(and the permitted metadata boundary), GPU integration, real credentials, per-environment
+database migrations, exact deployed domain verification, and hosted authentication,
+private-access and routing checks. Resolve these before enabling competition use.
+
+### Infrastructure setup after the blockers are resolved
+
+1. Import this repository as one Vercel project with repository root `.`.
+2. Connect a Postgres integration. Provision/use a **private** Blob store for
+   competition material only if that architecture is approved. Use separate
+   databases/stores for production and preview; no existing local SQLite data is
+   automatically migrated. Infrastructure tests below use local synthetic fixtures.
+3. Set the server environment variables below. Enable Vercel Queues for the project
+   if prompted. `backend/pyproject.toml` declares the private `sentry.cloud_tasks`
+   subscriber for the `sentry-analysis` topic; it has no public HTTP endpoint and
+   currently rejects work without inference.
+4. Apply the database schema once to each environment with
+   `python -m sentry.cloud_db` from `backend`, using that environment's `DATABASE_URL`.
+   This is an explicit migration command, never an import/build-time side effect.
+5. Run `vercel dev` with synthetic data to check combined routing. Credentials,
+   migrations, hosted checks and the GPU path must be verified before claiming
+   readiness. This change does not deploy a project or provision paid resources.
+
+| Variable | Value / source |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string; use the provider's pooled TLS URL in production |
+| `BLOB_READ_WRITE_TOKEN` | Server-only private Blob credentials, if approved; upload signing/writes remain blocked in code |
+| `BLOB_STORE_ID`, `VERCEL_OIDC_TOKEN` | Platform-provided Blob/OIDC configuration where available; do not invent OIDC tokens |
+| `INTERNAL_SERVICE_TOKEN` | A shared random secret (at least 32 random bytes) for backend-to-storage authorization |
+| `JURY_API_KEY` | Server-only jury API credential; an empty value denies jury access |
+| `ALLOWED_ORIGINS` | Optional JSON subset of the trusted hosted origins below; cannot expand them. Development may explicitly list localhost origins |
+| `VERCEL_PROJECT_PRODUCTION_URL` | Trusted platform value for the exact production domain (without scheme) |
+| `VERCEL_URL`, `VERCEL_BRANCH_URL` | Trusted platform values for this preview deployment and branch; only added in `VERCEL_ENV=preview` |
+| `PIPELINE_MODE` | `disabled` |
+| `STORAGE_URL` | **Do not set.** Vercel injects it from the backend service binding |
+
+Enable access to Vercel System Environment Variables. Hosted origins are exact
+HTTPS values derived from the platform variables above, with no wildcard or
+hostname-suffix matching. Production allows only its canonical production domain;
+previews also allow their own exact deployment/branch origins. Other projects,
+other preview deployments and localhost are not inferred or trusted. Missing
+platform URLs leave the allowlist empty; a conflicting `ALLOWED_ORIGINS` value
+fails startup. It may narrow the list, never broaden it. Verify the actual production
+domain selected by Vercel in the project settings before hosted use.
+
+The Vercel entrypoint ignores the local `backend/.env`, uses Postgres, and
+uses production policy/Secure cookies except when `VERCEL_ENV=development`.
+No `VITE_*` credential is used. The deployment ignore file excludes local secrets,
+databases, uploads, model weights, Python environments and caches.
+
+### Local services and verification
+
+Use Node.js 20.19+ or 22.12+, Python **3.12**, and a current Vercel CLI (validated
+with 64.5.0). For a clean checkout, create `backend/.venv` with Python 3.12 and
+install `backend` with its test dependencies. The CLI reuses `backend/.venv`;
+an existing Python 3.11 environment from the legacy workflow cannot run the
+current Vercel runtime. Use a separate checkout for services testing if retaining it.
+
+```powershell
+npm.cmd ci
+npm.cmd ci --prefix services/storage
+py -3.12 -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -e 'backend[test]'
+# Set a development DATABASE_URL and INTERNAL_SERVICE_TOKEN in this shell,
+# or use Vercel's linked Development environment. Never set STORAGE_URL.
+$env:ALLOWED_ORIGINS = '["http://localhost:3000","http://127.0.0.1:3000"]'
+$env:PIPELINE_MODE = 'disabled'
+Push-Location backend
+.venv/Scripts/python.exe -m sentry.cloud_db
+Pop-Location
+vercel dev
+# Without linking/authentication: vercel dev -L (supply development env yourself).
+```
+
+Verify `/`, `/api/health/live` (200), `/api/health/ready` (503 while analysis is
+disabled), and session/history using the configured origin. `/upload-token` and
+`/read-url` must never reach the internal storage service through the public domain.
+
+```powershell
+npm.cmd run build
+node --test tests/api.test.mjs tests/polling.test.mjs tests/cloud-upload.test.mjs
+node --test services/storage/test.mjs
+Push-Location backend
+.venv/Scripts/python.exe -m pytest -q
+Pop-Location
+```
+
+The cloud tests start and stop a disposable local PostgreSQL cluster; set
+`TEST_POSTGRES_BIN` to its binary directory (the Windows default is PostgreSQL 17).
+They never use the application's `DATABASE_URL`. They exercise real Postgres,
+the Queue SDK's embedded dispatcher, in-memory Blob doubles, and synthetic fixtures.
+Tests verify that cloud writes and serverless inference stay blocked, including
+with `PIPELINE_MODE=real`. Private artifact tests seed fixtures directly; they do
+not demonstrate real inference. Missing PostgreSQL/FFmpeg causes explicit skips.
+Hosted credentials, account configuration and a real deployment remain unverified.
+
+Verified after locality/origin safeguards on 2026-10-18: all 107 backend tests
+and 19 focused JavaScript tests passed, including Postgres integration, exact
+origin/CSRF/session/API-key checks, blocked cloud writes, and disabled serverless ML.
+Earlier that day the frontend build passed and `vercel dev -L` started all three
+services in an isolated checkout: `/` returned HTML, API liveness
+returned 200, disabled readiness returned 503, and unknown API paths returned JSON
+404. The existing frontend component suite fails on an outdated button-label
+expectation; that failure was reproduced in an unchanged HEAD checkout. Its broader
+run also hit a Node memory error. No hosted deployment or live Blob call was performed.
+
+The retained direct-upload client would send bytes to Blob, so it must remain
+unreachable through successful upload admission/token issuance until approval.
+Tests simulate it only with in-memory transports. Postgres transaction/attempt
+fencing and publication retry handling remain available for future GPU integration.
+Private media endpoints still check ownership before issuing five-minute signed
+read redirects. Treat those temporary links as bearer credentials.
+
+Abandoned uploads and stale-attempt artifacts remain private; deleting the job
+removes its Blob prefix. A retention/cleanup policy for unclaimed/abandoned data
+should be chosen before enabling public analysis. SQL session expiration is checked
+on access. Schema creation does not purge existing data.
+
+References: [services and routing](https://vercel.com/docs/services),
+[runtime bindings](https://vercel.com/docs/services/bindings),
+[Python queue subscribers](https://vercel.com/docs/queues/python-sdk),
+[private Blob storage](https://vercel.com/docs/vercel-blob/private-storage),
+[trusted deployment variables](https://vercel.com/docs/environment-variables/system-environment-variables).
+
 Stage 2 connects the existing React/Vite interface to the local FastAPI backend:
 browser session → manual upload → durable worker job → polling → server result,
 private video/evidence and paginated history. Russian, Kazakh and English, themes,

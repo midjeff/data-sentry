@@ -1,4 +1,6 @@
 .venv/
+.venv-cloud/
+build/
 .bootstrap/
 .python/
 .uv-cache/

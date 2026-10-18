@@ -206,7 +206,7 @@ def test_upload_deadline_closes_partial_spool(client, app, settings, monkeypatch
         yield b"\r\n--abc--\r\n"
     async def send():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver",
-                                     cookies=client.cookies) as async_client:
+                                     cookies=client.cookies.jar) as async_client:
             return await async_client.post("/api/ui/analyze", headers=headers, content=slow_body())
     response = asyncio.run(send())
     assert response.status_code == 408

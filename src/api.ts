@@ -69,8 +69,15 @@ export function mapJob(value: unknown): Job {
 
 export const videoUrl = (jobId: string) => `/api/ui/jobs/${id(jobId)}/video`;
 
-export function createApiClient(fetcher: typeof fetch = (...args) => fetch(...args)) {
+async function uploadPrivateBlob(pathname: string, file: File, token: string, signal?: AbortSignal) {
+  const { put } = await import('@vercel/blob/client');
+  await put(pathname, file, { access: 'private', token, contentType: 'application/octet-stream',
+    multipart: true, abortSignal: signal });
+}
+
+export function createApiClient(fetcher: typeof fetch = (...args) => fetch(...args), uploadBlob = uploadPrivateBlob) {
   let csrf: string | undefined;
+  let uploadTransport: 'multipart' | 'blob' = 'multipart';
   let initialization: Promise<void> | undefined;
   let uploading = false;
 
@@ -102,6 +109,7 @@ export function createApiClient(fetcher: typeof fetch = (...args) => fetch(...ar
     // Shared across renders/Strict Mode. A consumer must not abort this shared request.
     initialization = request('/api/ui/session', { method: 'POST' }).then(value => {
       csrf = text(record(value).csrf_token);
+      uploadTransport = record(value).upload_transport === 'blob' ? 'blob' : 'multipart';
     }).finally(() => { initialization = undefined; });
     return initialization;
   }
@@ -149,6 +157,22 @@ export function createApiClient(fetcher: typeof fetch = (...args) => fetch(...ar
       uploading = true;
       try {
         await initialize(); signal?.throwIfAborted();
+        if (uploadTransport === 'blob') {
+          const data = record(await request('/api/ui/uploads', {
+            method: 'POST', signal, headers: { 'X-CSRF-Token': csrf!, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, size: file.size,
+              display_name: metadata?.displayName ?? file.name,
+              analysis_request: metadata?.request ?? '', batch_id: metadata?.batchId ?? null }),
+          }));
+          const jobId = id(data.job_id), pathname = text(data.pathname), token = text(data.token);
+          if (!new RegExp(`^jobs/${jobId}/input\\.(mov|mp4|avi|mkv|webm)$`).test(pathname)) invalid();
+          await uploadBlob(pathname, file, token, signal);
+          const completed = record(await request(`/api/ui/uploads/${jobId}/complete`, {
+            method: 'POST', signal, headers: { 'X-CSRF-Token': csrf! },
+          }));
+          if (id(completed.job_id) !== jobId) invalid();
+          return jobId;
+        }
         const body = new FormData(); body.append('file', file);
         const data = record(await request('/api/ui/analyze', { method: 'POST', body, signal, headers: { 'X-CSRF-Token': csrf!, ...(metadata ? { ...(metadata.batchId ? { 'X-Sentry-Batch': metadata.batchId } : {}), 'X-Sentry-Display-Name': encodeURIComponent(metadata.displayName), 'X-Sentry-Request': encodeURIComponent(metadata.request) } : {}) } }));
         return id(data.job_id);

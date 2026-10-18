@@ -14,6 +14,12 @@ log = logging.getLogger(__name__)
 
 
 def readiness(db, settings):
+    if settings.storage_backend == 'vercel':
+        # Real ML must run on the local GPU computer. Its authenticated connection
+        # and data-locality boundary are not implemented or verified yet.
+        return {'api_running': True, 'worker_available': False,
+                'demo_processing_available': False, 'real_pipeline_ready': False,
+                'pipeline_mode': settings.pipeline_mode}
     state = db.worker_state()
     available = bool(state and time.time() - state["heartbeat"] < settings.worker_stale_sec)
     compatible = bool(available and state["mode"] == settings.pipeline_mode)
@@ -49,8 +55,18 @@ def job_dir(settings, job):
     return settings.data_dir / "jobs" / job["id"]
 
 
-def read_result(settings, job):
+def read_result(settings, job, storage=None):
     try:
+        if settings.storage_backend == 'vercel':
+            from .cloud_storage import CloudStorage, result_prefix
+            storage = storage or CloudStorage(settings)
+            prefix = result_prefix(job)
+            result = FinalResult.model_validate_json(storage.read(prefix + '/final_result.json'))
+            if (result.decision.is_demo != bool(job['is_demo']) or
+                    abs(result.decision.source_duration_sec - job['duration']) > 1e-6 or
+                    result.decision.verdict != job['verdict']):
+                raise ValueError()
+            return result
         if job["result_ref"] != "final_result.json":
             raise ValueError()
         result = FinalResult.model_validate_json((job_dir(settings, job) / "final_result.json").read_bytes())
@@ -77,6 +93,11 @@ def jury_response(settings, job):
     elif job["status"] == "done":
         try:
             result = read_result(settings, job)
+            def frame_bytes(frame):
+                if settings.storage_backend == 'vercel':
+                    from .cloud_storage import CloudStorage, result_prefix
+                    return CloudStorage(settings).read(result_prefix(job) + f'/evidence/{frame.frame_id}.jpg')
+                return (job_dir(settings, job) / 'evidence' / f'{frame.frame_id}.jpg').read_bytes()
             if result.decision.is_demo:
                 raise SentryError("NOT_FOUND", 404)
             response["verdict"] = result.decision.verdict
@@ -85,8 +106,7 @@ def jury_response(settings, job):
                  "description": violation.description,
                  "evidence_frames": [
                      {"timestamp_sec": frame.timestamp_sec,
-                      "image_base64": base64.b64encode((job_dir(settings, job) / "evidence" /
-                                                       f"{frame.frame_id}.jpg").read_bytes()).decode("ascii")}
+                      "image_base64": base64.b64encode(frame_bytes(frame)).decode("ascii")}
                      for frame in frames]}
                 for violation, frames in zip(result.decision.violations, result.evidence)]
         except SentryError as error:
@@ -96,7 +116,7 @@ def jury_response(settings, job):
     return response
 
 
-def ui_response(settings, job, detail=False):
+def ui_response(settings, job, detail=False, storage=None):
     end = job["finished_at"] or time.time()
     timings = json.loads(job["timings"])
     if job["uploaded_at"] is not None:
@@ -115,7 +135,7 @@ def ui_response(settings, job, detail=False):
     if job["status"] == "failed":
         response["error"] = safe_error(job["error_code"])
     if detail and job["status"] == "done":
-        result = read_result(settings, job)
+        result = read_result(settings, job, storage)
         response["result"] = result.model_dump()
         for frames in response["result"]["evidence"]:
             for frame in frames:

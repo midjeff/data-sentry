@@ -1,0 +1,7 @@
+{
+  "name": "data-sentry-storage",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test.mjs" },
+  "dependencies": { "@vercel/blob": "2.8.2", "express": "^5.1.0" }
+}

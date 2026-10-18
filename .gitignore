@@ -6,3 +6,8 @@ dist/
 
 .python-runtimes/
 backend/.venv-test/
+.vercel/
+**/.vercel/
+.env
+.env.*
+!.env.example

@@ -1,5 +1,19 @@
 # DATA Sentry backend — Stage 1
 
+## Vercel services
+
+See the [root deployment guide](../README.md#vercel-deployment) for the new cloud
+entrypoint (`main:app`), Postgres migration, blocked Blob uploads, Queue subscriber,
+and runtime `STORAGE_URL` binding. Vercel uses Python 3.12 and Postgres;
+the Windows/SQLite workflow below remains a separate local development option.
+ForteBank requires local AI processing: the real pipeline must run on the GPU
+computer, never in a Vercel Function. GPU integration is not implemented or verified.
+Blob upload tokens and writes are blocked pending explicit data-locality approval;
+the queue consumer rejects jobs without downloading media or invoking an adapter.
+Credentials, hosted migrations and deployment checks remain outstanding.
+The Vercel entrypoint never reads the local `.env`; hosted CORS/CSRF origins are
+restricted to exact trusted deployment URLs, with localhost development-only.
+
 Рабочий backend для локальной Windows-машины: FastAPI, SQLite-очередь, отдельный
 последовательный worker, приватная история браузера, проверка видео и извлечение JPEG.
 На Stage 1 React не менялся. В Stage 2 существующий frontend подключён к этому API:

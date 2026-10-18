@@ -1,4 +1,5 @@
 MESSAGES = {
+    "CLOUD_UPLOAD_NOT_APPROVED": "Cloud uploads are disabled pending data-locality approval.",
     "JOB_BUSY": "Cancel processing and wait for the worker to release this job before retrying the action.",
     "INVALID_STATE": "This action is not allowed for the current job status.",
     "ML_NOT_CONFIGURED": "The real decision pipeline is not configured.",
