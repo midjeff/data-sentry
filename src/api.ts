@@ -1,8 +1,9 @@
 // Browser contract only. All server-to-view mapping lives here.
-export type Status = 'processing' | 'done' | 'failed';
+export type Status = 'processing' | 'done' | 'failed' | 'cancelled';
 export type Verdict = 'violation' | 'no_violation';
 export type JobSummary = {
   id: string; filename: string; createdAt: number; uploadedAt: number | null;
+  batchId: string | null; originalFilename: string; analysisRequest: string; attempt: number;
   status: Status; stage: string; isDemo: boolean; verdict: Verdict | null; errorCode?: string;
 };
 export type Evidence = { id: string; timestamp: number; requestedTimestamp: number; offset: number; url: string };
@@ -11,7 +12,7 @@ export type Violation = {
   regulatoryReferences: Record<string, unknown>[];
 };
 export type Result = { verdict: Verdict; duration: number; violations: Violation[] };
-export type Job = JobSummary & ({ status: 'done'; result: Result } | { status: 'processing' | 'failed'; result?: never });
+export type Job = JobSummary & ({ status: 'done'; result: Result } | { status: 'processing' | 'failed' | 'cancelled'; result?: never });
 export type HistoryPage = { items: JobSummary[]; total: number; limit: number; offset: number };
 
 export class ApiError extends Error {
@@ -32,8 +33,9 @@ const within = (value: unknown, duration: number): number => number(value) < dur
 
 function summary(value: unknown): JobSummary {
   const data = record(value), status = data.status;
-  if (status !== 'processing' && status !== 'done' && status !== 'failed') invalid();
-  return { id: id(data.job_id), filename: text(data.filename), createdAt: number(data.created_at) * 1000,
+  if (status !== 'processing' && status !== 'done' && status !== 'failed' && status !== 'cancelled') invalid();
+  return { id: id(data.job_id), filename: data.display_name == null ? text(data.filename) : text(data.display_name), originalFilename: text(data.filename),
+    batchId: data.batch_id == null ? null : id(data.batch_id), analysisRequest: data.analysis_request == null ? '' : typeof data.analysis_request === 'string' ? data.analysis_request : invalid(), attempt: data.attempt == null ? 1 : integer(data.attempt), createdAt: number(data.created_at) * 1000,
     uploadedAt: data.uploaded_at === null ? null : number(data.uploaded_at) * 1000,
     status: status as Status, stage: text(data.stage), isDemo: boolean(data.is_demo),
     verdict: data.verdict === null ? null : verdict(data.verdict),
@@ -119,13 +121,36 @@ export function createApiClient(fetcher: typeof fetch = (...args) => fetch(...ar
       if (job.id !== jobId) invalid();
       return job;
     },
-    async upload(file: File, signal?: AbortSignal): Promise<string> {
+    async createBatch(): Promise<string> {
+      await initialize();
+      return id(record(await request('/api/ui/batches', { method: 'POST', headers: { 'X-CSRF-Token': csrf! } })).batch_id);
+    },
+    async batch(batchId: string, signal?: AbortSignal): Promise<JobSummary[]> {
+      await initialize(); signal?.throwIfAborted();
+      const items = list(record(await request(`/api/ui/batches/${id(batchId)}`, { signal })).items).map(summary);
+      if (items.some((item) => item.batchId !== batchId)) invalid();
+      return items;
+    },
+    async cancel(jobId: string): Promise<Job> {
+      await initialize();
+      return mapJob(await request(`/api/ui/jobs/${id(jobId)}/cancel`, { method: 'POST', headers: { 'X-CSRF-Token': csrf! } }));
+    },
+    async restore(jobId: string): Promise<Job> {
+      await initialize();
+      return mapJob(await request(`/api/ui/jobs/${id(jobId)}/restore`, { method: 'POST', headers: { 'X-CSRF-Token': csrf! } }));
+    },
+    async delete(jobId: string): Promise<void> {
+      await initialize();
+      const result = record(await request(`/api/ui/jobs/${id(jobId)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': csrf! } }));
+      if (result.deleted !== true) invalid();
+    },
+    async upload(file: File, signal?: AbortSignal, metadata?: { batchId?: string; displayName: string; request: string }): Promise<string> {
       if (uploading) throw new ApiError('UPLOAD_IN_PROGRESS');
       uploading = true;
       try {
         await initialize(); signal?.throwIfAborted();
         const body = new FormData(); body.append('file', file);
-        const data = record(await request('/api/ui/analyze', { method: 'POST', body, signal, headers: { 'X-CSRF-Token': csrf! } }));
+        const data = record(await request('/api/ui/analyze', { method: 'POST', body, signal, headers: { 'X-CSRF-Token': csrf!, ...(metadata ? { ...(metadata.batchId ? { 'X-Sentry-Batch': metadata.batchId } : {}), 'X-Sentry-Display-Name': encodeURIComponent(metadata.displayName), 'X-Sentry-Request': encodeURIComponent(metadata.request) } : {}) } }));
         return id(data.job_id);
       } finally { uploading = false; }
       // Never automatically retry POSTs, including ambiguous network failures.

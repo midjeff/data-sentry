@@ -1,4 +1,6 @@
 MESSAGES = {
+    "JOB_BUSY": "Cancel processing and wait for the worker to release this job before retrying the action.",
+    "INVALID_STATE": "This action is not allowed for the current job status.",
     "ML_NOT_CONFIGURED": "The real decision pipeline is not configured.",
     "PIPELINE_DISABLED": "Processing is disabled.",
     "WORKER_UNAVAILABLE": "A compatible processing worker is unavailable.",

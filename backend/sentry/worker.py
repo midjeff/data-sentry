@@ -170,9 +170,10 @@ class Worker:
             self.last_cleanup = time.monotonic()
         if self.active_job:
             current = self.db.get(self.active_job["id"])
-            if current["status"] == "failed" or time.time() >= current["deadline"]:
+            if current["status"] in {"failed", "cancelled"} or time.time() >= current["deadline"]:
                 self.db.fail(current["id"], "JOB_TIMEOUT", self.worker_id)
                 self.stop_child()
+                self.db.release(current["id"], self.worker_id)
                 self.active_job = None
                 return
             try:
@@ -185,10 +186,12 @@ class Worker:
                 if kind != "done":
                     self.db.fail(current["id"], "WORKER_INTERRUPTED", self.worker_id)
                     self.stop_child()
+                    self.db.release(current["id"], self.worker_id)
                 self.active_job = None
             elif not self.child.is_alive():
                 self.db.fail(current["id"], "WORKER_INTERRUPTED", self.worker_id)
                 self.stop_child()
+                self.db.release(current["id"], self.worker_id)
                 self.active_job = None
             return
         if not self.ready:

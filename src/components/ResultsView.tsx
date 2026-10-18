@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, CheckCircle2, ChevronRight, FileText, Maximize2, TriangleAlert, X } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, ChevronRight, FileText, Maximize2, TriangleAlert, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { DemoNotice } from './VideoUpload';
 import { videoFormatLabel } from '../videoFormats';
@@ -42,9 +42,9 @@ function EvidenceGallery({ frames }: { frames: Evidence[] }) {
   </div>;
 }
 
-function ViolationDetails({ event }: { event: Violation }) {
+function ViolationDetails({ event, onHide }: { event: Violation; onHide: () => void }) {
   const { t } = useI18n();
-  return <section className="violation-details"><h2>{t('details')}</h2>
+  return <section className="violation-details"><div className="details-heading"><h2>{t('details')}</h2><button type="button" className="button button-secondary details-toggle" aria-label={t('hideDetails')} aria-expanded={true} aria-controls="event-details-panel" onClick={onHide}><PanelRightClose size={15} />{t('hideDetailsShort')}</button></div>
     <dl><div><dt>{t('violationType')}</dt><dd>{event.type}</dd></div>
       <div><dt>{t('timestamp')}</dt><dd className="tabular-nums">{formatTime(event.timestamp)}</dd></div>
       <div><dt>{t('explanation')}</dt><dd className="explanation">{event.description}</dd></div></dl>
@@ -59,6 +59,7 @@ export function ResultsView({ job, onNew }: { job: Job & { status: 'done' }; onN
   const { t } = useI18n();
   const video = useRef<HTMLVideoElement>(null);
   const [metadataReady, setMetadataReady] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
   const [selected, setSelected] = useState(0);
   const [playbackError, setPlaybackError] = useState(false);
   const pendingSeek = useRef<number | null>(null);
@@ -69,7 +70,7 @@ export function ResultsView({ job, onNew }: { job: Job & { status: 'done' }; onN
     if (metadataReady && video.current) { video.current.currentTime = timestamp; pendingSeek.current = null; }
     else pendingSeek.current = timestamp;
   };
-  const choose = (index: number) => { setSelected(index); seek(result.violations[index].timestamp); };
+  const choose = (index: number) => { setSelected(index); setDetailsOpen(true); seek(result.violations[index].timestamp); };
   return <section className="results-content">
     <div className="page-heading results-heading"><div><h1>{t('results')}</h1><p>{t('resultSubtitle')}</p></div>
       <button className="button button-secondary" onClick={onNew}><ArrowLeft size={16} />{t('newAnalysis')}</button></div>
@@ -77,7 +78,8 @@ export function ResultsView({ job, onNew }: { job: Job & { status: 'done' }; onN
       {flagged ? <TriangleAlert size={19} /> : <CheckCircle2 size={19} />}<strong>{t(flagged ? 'verdictFlagged' : 'verdictClear')}</strong>
       {job.isDemo && <span className="demo-pill">{t('demo')}</span>}
     </div>
-    <div className="results-grid"><div className="video-column"><div className="panel video-panel">
+    {flagged && !detailsOpen && <div className="details-toolbar"><button type="button" className="button button-secondary details-toggle" aria-expanded={false} aria-controls="event-details-panel" onClick={() => setDetailsOpen(true)}><PanelRightOpen size={15} />{t('showDetails')}</button></div>}
+    <div className={`results-grid ${!flagged || !detailsOpen ? 'details-collapsed' : ''}`}><div className="video-column"><div className="panel video-panel">
       <div className="panel-title"><h2>{t('recording')}</h2><span className="format-tag">{videoFormatLabel({ name: job.filename })}</span></div>
       <video ref={video} src={videoUrl(job.id)} controls playsInline preload="metadata" aria-label={t('recording')}
         onKeyDown={event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
@@ -90,14 +92,16 @@ export function ResultsView({ job, onNew }: { job: Job & { status: 'done' }; onN
         onLoadedData={() => setPlaybackError(false)} onError={() => setPlaybackError(true)} />
       {playbackError && <p className="playback-error" role="alert">{t('playbackError')}</p>}
       <div className="video-footer"><span title={job.filename}>{job.filename}</span><span className="tabular-nums">{formatTime(result.duration)}</span></div>
-    </div><p className="helper-text mt-3">{t('seekNote')}</p>{job.isDemo && <DemoNotice results />}</div>
-    <div className="panel events-panel">{flagged ? <>
-      <section className="violations-list"><div className="panel-title"><h2>{t('events')}</h2><span className="count-badge">{result.violations.length}</span></div>
+    </div>
+      <div className="panel events-panel">{flagged ? <section className="violations-list"><div className="panel-title"><h2>{t('events')}</h2><span className="count-badge">{result.violations.length}</span></div>
         <div className="event-buttons">{result.violations.map((event, index) => <button key={index}
           className={`event-button ${selected === index ? 'selected' : ''}`} aria-pressed={selected === index} onClick={() => choose(index)}>
           <span className="event-dot" /><span className="flex-1">{event.type}</span><span className="event-time">{formatTime(event.timestamp)}</span><ChevronRight size={16} /></button>)}</div>
-      </section><ViolationDetails event={current} />
-    </> : <div className="empty-results"><div className="clear-symbol"><Check size={25} /></div><h2>{t('clearTitle')}</h2>
-      <p>{t('clearDescription')}</p>{job.isDemo && <span className="demo-pill">{t('demo')}</span>}</div>}</div></div>
+      </section> : <div className="empty-results"><div className="clear-symbol"><Check size={25} /></div><h2>{t('clearTitle')}</h2>
+      <p>{t('clearDescription')}</p>{job.isDemo && <span className="demo-pill">{t('demo')}</span>}</div>}</div>
+      <p className="helper-text mt-3">{t('seekNote')}</p>{job.isDemo && <DemoNotice results />}
+    </div>
+    {flagged && <div id="event-details-panel" className="details-collapse" inert={!detailsOpen} aria-hidden={!detailsOpen}><div className="details-content"><div className="panel details-panel"><ViolationDetails event={current} onHide={() => setDetailsOpen(false)} /></div></div></div>}
+    </div>
   </section>;
 }

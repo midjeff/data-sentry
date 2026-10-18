@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, FileCheck, Moon, PanelLeftClose, PanelLeftOpen, ScanLine, Sun } from 'lucide-react';
+import { CircleX, AlertTriangle, CheckCircle2, Settings2, ChevronDown, FileCheck, Moon, PanelLeftClose, PanelLeftOpen, ScanLine, Sun } from 'lucide-react';
 import { errorMessageKey, useI18n, type Language } from '../i18n';
 
+import { HistoryActions } from './HistoryActions';
+import { groupHistory, historyViolationStatus, readHistoryPreferences, saveHistoryPreferences } from '../historyDisplay';
 import type { JobSummary } from '../api';
 
 export type View = 'analysis' | 'results';
@@ -91,13 +93,28 @@ export function Header({ sidebarOpen, onToggleSidebar }: { sidebarOpen: boolean;
 }
 
 export function Navigation({ view, onNavigate, hasResults, mobile = false, hidden = false, history = [], activeId, onOpenHistory,
-  loading = false, error, offset = 0, total = 0, limit = 20, onPage, onRefresh }: {
+  loading = false, error, offset = 0, total = 0, limit = 20, onPage, onRefresh, onDeleteHistory }: {
   view: View; onNavigate: (view: View) => void; hasResults: boolean; mobile?: boolean; hidden?: boolean;
   history?: JobSummary[]; activeId?: string | null; onOpenHistory?: (record: JobSummary) => void;
   loading?: boolean; error?: string | null; offset?: number; total?: number; limit?: number;
-  onPage?: (offset: number) => void; onRefresh?: () => void;
+  onPage?: (offset: number) => void; onRefresh?: () => void; onDeleteHistory?: (record: JobSummary) => void | Promise<void>;
 }) {
   const { t, language } = useI18n();
+  const [preferences, setPreferences] = useState(() => {
+    try { return readHistoryPreferences(localStorage); }
+    catch { return { showStatusIcons: true, showBatchGrouping: true }; }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settings = useRef<HTMLDivElement>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const settingsId = useId();
+  useEffect(() => { try { saveHistoryPreferences(localStorage, preferences); } catch { /* Storage unavailable. */ } }, [preferences]);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const dismiss = (event: PointerEvent) => { if (event.target instanceof Node && !settings.current?.contains(event.target)) setSettingsOpen(false); };
+    document.addEventListener('pointerdown', dismiss);
+    return () => document.removeEventListener('pointerdown', dismiss);
+  }, [settingsOpen]);
   return <nav id={mobile ? undefined : 'sidebar-navigation'} hidden={hidden} className={mobile ? 'mobile-navigation' : 'sidebar'}>
     <button className={`nav-item ${view === 'analysis' ? 'is-active' : ''}`} onClick={() => onNavigate('analysis')} aria-current={view === 'analysis' ? 'page' : undefined}>
       <ScanLine size={20} /><span>{t(mobile ? 'analysisShort' : 'analysis')}</span>
@@ -106,17 +123,24 @@ export function Navigation({ view, onNavigate, hasResults, mobile = false, hidde
       <FileCheck size={20} /><span>{t('results')}</span>
     </button>
     {!mobile && <section className="analysis-history" aria-label={t('history')}>
-      <h2>{t('history')}</h2>
+      <div className="history-heading"><h2>{t('history')}</h2><div ref={settings} className="history-settings" onKeyDown={(event) => { if (event.key === 'Escape' && settingsOpen) { event.stopPropagation(); setSettingsOpen(false); settingsButton.current?.focus(); } }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSettingsOpen(false); }}>
+        <button ref={settingsButton} type="button" className="icon-button history-settings-button" aria-label={t('historyDisplaySettings')} title={t('historyDisplaySettings')} aria-expanded={settingsOpen} aria-controls={settingsOpen ? settingsId : undefined} onClick={() => setSettingsOpen((open) => !open)}><Settings2 size={16} /></button>
+        {settingsOpen && <div id={settingsId} className="history-settings-popover" role="group" aria-label={t('historyDisplaySettings')}>
+          <label><span>{t('showHistoryIcons')}</span><input type="checkbox" role="switch" checked={preferences.showStatusIcons} onChange={(event) => setPreferences((current) => ({ ...current, showStatusIcons: event.target.checked }))} /></label>
+          <label><span>{t('showHistoryGroups')}</span><input type="checkbox" role="switch" checked={preferences.showBatchGrouping} onChange={(event) => setPreferences((current) => ({ ...current, showBatchGrouping: event.target.checked }))} /></label>
+        </div>}
+      </div></div>
       <button className="history-action" disabled={loading} onClick={onRefresh}>{t('refreshHistory')}</button>
       {loading && <p className="history-empty" role="status">{t('loading')}</p>}
       {error && <p className="error-message" role="alert">{t(errorMessageKey(error))}</p>}
       {!loading && !error && history.length === 0 && <p className="history-empty">{t('historyEmpty')}</p>}
-      <div className="history-list">{history.map((record) => <div key={record.id} className={`history-row ${view === 'results' && activeId === record.id ? 'is-active' : ''}`}>
+      <div className="history-list">{groupHistory(history).map(group => <div key={group.id} className={preferences.showBatchGrouping && group.records.length > 1 ? 'history-batch is-grouped' : 'history-batch'}>{group.records.map((record) => <div key={record.id} className={`history-row ${view === 'results' && activeId === record.id ? 'is-active' : ''}`}>
         <button className="history-open" onClick={() => onOpenHistory?.(record)} aria-current={view === 'results' && activeId === record.id ? 'true' : undefined} title={record.filename}>
-          <span>{record.filename}</span><small>{new Date(record.createdAt).toLocaleString(language, { dateStyle: 'short', timeStyle: 'short' })}</small>
-          <small>{t(record.status === 'done' ? 'completed' : record.status === 'failed' ? 'analysisFailed' : 'active')}{record.isDemo ? ` · ${t('demo')}` : ''}</small>
+          <span className="history-filename">{preferences.showStatusIcons && (record.status === 'cancelled' ? <span className="history-violation-icon cancelled" role="img" title={t('videoCancelled')} aria-label={t('videoCancelled')}><CircleX size={15} /></span> : historyViolationStatus(record) && <span className={`history-violation-icon ${historyViolationStatus(record)}`} role="img" title={`${record.isDemo ? t('demo') + ' · ' : ''}${t(record.verdict === 'violation' ? 'historyFlagged' : 'historyClear')}`} aria-label={t(record.verdict === 'violation' ? 'historyFlagged' : 'historyClear')}>{record.verdict === 'violation' ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}</span>)}<span className="history-filename-text">{record.filename}</span></span><small>{new Date(record.createdAt).toLocaleString(language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+          <small>{t(record.status === 'done' ? 'completed' : record.status === 'failed' ? 'analysisFailed' : record.status === 'cancelled' ? 'videoCancelled' : 'active')}{record.isDemo ? ` · ${t('demo')}` : ''}</small>
         </button>
-      </div>)}</div>
+        {onDeleteHistory && <HistoryActions record={record} onDelete={() => onDeleteHistory(record)} />}
+      </div>)}</div>)}</div>
       {total > limit && <div className="history-pagination"><button className="history-action" disabled={loading || offset === 0} onClick={() => onPage?.(Math.max(0, offset - limit))}>{t('previousPage')}</button>
         <span>{Math.floor(offset / limit) + 1} / {Math.ceil(total / limit)}</span>
         <button className="history-action" disabled={loading || offset + limit >= total} onClick={() => onPage?.(offset + limit)}>{t('nextPage')}</button></div>}

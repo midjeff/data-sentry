@@ -9,6 +9,7 @@ import secrets
 import shutil
 import time
 import uuid
+from urllib.parse import unquote
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -92,7 +93,7 @@ def create_app(settings=None):
     app.state.settings, app.state.db = settings, db
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True,
-                       allow_methods=["GET", "POST"], allow_headers=["Content-Type", "X-CSRF-Token", "Range"],
+                       allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token", "Range", "X-Sentry-Batch", "X-Sentry-Display-Name", "X-Sentry-Request"],
                        expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"])
 
     @app.exception_handler(SentryError)
@@ -164,6 +165,13 @@ def create_app(settings=None):
         return response
 
     async def upload(request, channel, owner):
+        batch_id = request.headers.get("X-Sentry-Batch") if channel == "ui" else None
+        if batch_id and (len(batch_id) != 32 or not db.owns_batch(batch_id, owner)):
+            raise SentryError("NOT_FOUND", 404)
+        display_name = unquote(request.headers.get("X-Sentry-Display-Name", "")) if channel == "ui" else None
+        analysis_request = unquote(request.headers.get("X-Sentry-Request", "")) if channel == "ui" else ""
+        if (display_name and (len(display_name) > 512 or any(ord(c) < 32 for c in display_name))) or len(analysis_request) > 4000:
+            raise SentryError("INVALID_UPLOAD", 422)
         started = time.time()
         deadline = started + settings.job_timeout_sec
         require_processing(db, settings, channel)
@@ -207,7 +215,7 @@ def create_app(settings=None):
                     raise SentryError("UNSUPPORTED_EXTENSION", 415)
                 if not file.size:
                     raise SentryError("INVALID_UPLOAD", 422)
-                db.reserve(job_id, owner, channel, filename, extension, started)
+                db.reserve(job_id, owner, channel, filename, extension, started, batch_id, display_name or filename, analysis_request)
                 reserved = True
                 directory.mkdir()
                 lease = UploadLease(directory)
@@ -286,6 +294,47 @@ def create_app(settings=None):
         db.expire()
         rows, total = db.history(owner, limit, offset)
         return {"items": [ui_response(settings, job) for job in rows], "total": total, "limit": limit, "offset": offset}
+
+    @app.post("/api/ui/batches")
+    def create_batch(request: Request):
+        owner = browser_auth(request, mutate=True)
+        batch_id = uuid.uuid4().hex
+        db.create_batch(batch_id, owner)
+        return {"batch_id": batch_id}
+
+    @app.get("/api/ui/batches/{batch_id}")
+    def batch_jobs(batch_id: str, request: Request):
+        owner = browser_auth(request)
+        if not db.owns_batch(batch_id, owner):
+            raise SentryError("NOT_FOUND", 404)
+        db.expire()
+        return {"items": [ui_response(settings, job) for job in db.batch_history(batch_id, owner)]}
+
+    @app.post("/api/ui/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str, request: Request):
+        owner = browser_auth(request, mutate=True)
+        owned_job(db, job_id, owner)
+        db.cancel(job_id, owner)
+        return ui_response(settings, owned_job(db, job_id, owner), detail=True)
+
+    @app.post("/api/ui/jobs/{job_id}/restore")
+    def restore_job(job_id: str, request: Request):
+        owner = browser_auth(request, mutate=True)
+        job = owned_job(db, job_id, owner)
+        path = job_dir(settings, job) / f'input{job["extension"]}'
+        if not path.is_file() or not job["uploaded_at"]:
+            raise SentryError("ARTIFACT_UNAVAILABLE", 409)
+        require_processing(db, settings, "ui")
+        db.restore(job_id, owner)
+        return ui_response(settings, owned_job(db, job_id, owner), detail=True)
+
+    @app.delete("/api/ui/jobs/{job_id}")
+    def delete_job(job_id: str, request: Request):
+        owner = browser_auth(request, mutate=True)
+        job = owned_job(db, job_id, owner)
+        db.delete_job(job_id, owner)
+        shutil.rmtree(job_dir(settings, job), ignore_errors=True)
+        return {"deleted": True}
 
     @app.get("/api/ui/jobs/{job_id}")
     def ui_job(job_id: str, request: Request):

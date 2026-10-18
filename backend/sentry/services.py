@@ -109,7 +109,9 @@ def ui_response(settings, job, detail=False):
     timings["end_to_end_sec"] = max(0, end-job["created_at"])
     response = {"job_id": job["id"], "filename": job["filename"], "uploaded_at": job["uploaded_at"],
                 "created_at": job["created_at"], "status": job["status"], "stage": job["stage"],
-                "is_demo": bool(job["is_demo"]), "verdict": job["verdict"], "timings": timings}
+                "is_demo": bool(job["is_demo"]), "verdict": job["verdict"], "timings": timings,
+                "batch_id": job.get("batch_id"), "display_name": job.get("display_name") or job["filename"],
+                "analysis_request": job.get("analysis_request", ""), "attempt": job.get("attempt", 1)}
     if job["status"] == "failed":
         response["error"] = safe_error(job["error_code"])
     if detail and job["status"] == "done":

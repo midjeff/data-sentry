@@ -42,6 +42,12 @@ class Database:
                 );
             """)
 
+            columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+            for name, declaration in {"batch_id": "TEXT", "display_name": "TEXT", "analysis_request": "TEXT NOT NULL DEFAULT ''", "attempt": "INTEGER NOT NULL DEFAULT 1"}.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+            db.execute("CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES sessions(token_hash), created_at REAL NOT NULL)")
+
     @contextmanager
     def connect(self, write=False):
         db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
@@ -77,7 +83,7 @@ class Database:
         with self.connect(True) as db:
             db.execute("UPDATE sessions SET csrf_hash=? WHERE token_hash=?", (csrf_hash, owner))
 
-    def reserve(self, job_id, owner, channel, filename, extension, created_at):
+    def reserve(self, job_id, owner, channel, filename, extension, created_at, batch_id=None, display_name=None, analysis_request=""):
         now = time.time()
         with self.connect(True) as db:
             db.execute("""UPDATE jobs SET status='failed', error_code='JOB_TIMEOUT',
@@ -91,6 +97,7 @@ class Database:
                        (job_id, owner, channel, self.settings.pipeline_mode,
                         int(self.settings.pipeline_mode == "mock"), filename, extension,
                         created_at, created_at + self.settings.job_timeout_sec, now))
+            db.execute("UPDATE jobs SET batch_id=?,display_name=?,analysis_request=? WHERE id=?", (batch_id, display_name, analysis_request, job_id))
 
     def enqueue(self, job_id, duration, size):
         now = time.time()
@@ -140,13 +147,15 @@ class Database:
         with self.connect(True) as db:
             db.execute("""UPDATE jobs SET status='failed',error_code='WORKER_INTERRUPTED',
                 finished_at=?,updated_at=? WHERE status='processing' AND worker_id IS NOT NULL""", (now, now))
+        with self.connect(True) as db:
+            db.execute("UPDATE jobs SET worker_id=NULL WHERE status!='processing'")
         self.expire()
 
     def claim(self, worker_id):
         now = time.time()
         with self.connect(True) as db:
             # A single durable slot, even when independent callers race.
-            if db.execute("SELECT 1 FROM jobs WHERE status='processing' AND worker_id IS NOT NULL").fetchone():
+            if db.execute("SELECT 1 FROM jobs WHERE worker_id IS NOT NULL AND status IN ('processing','cancelled')").fetchone():
                 return None
             row = db.execute("""SELECT id FROM jobs WHERE status='processing' AND stage='queued'
                 AND deadline>? AND mode=? ORDER BY created_at,id LIMIT 1""", (now, self.settings.pipeline_mode)).fetchone()
@@ -177,6 +186,55 @@ class Database:
         now = time.time()
         with self.connect(True) as db:
             return db.execute("""UPDATE jobs SET status='done',finished_at=?,updated_at=?,
-                result_ref='final_result.json',verdict=?,timings=? WHERE id=? AND worker_id=?
+                result_ref='final_result.json',verdict=?,timings=?,worker_id=NULL WHERE id=? AND worker_id=?
                 AND status='processing' AND deadline>?""",
                 (now, now, verdict, json.dumps(timings), job_id, worker_id, now)).rowcount == 1
+
+
+    def create_batch(self, batch_id, owner):
+        with self.connect(True) as db:
+            db.execute("INSERT INTO batches VALUES (?,?,?)", (batch_id, owner, time.time()))
+
+    def owns_batch(self, batch_id, owner):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM batches WHERE id=? AND owner=?", (batch_id, owner)).fetchone() is not None
+
+    def batch_history(self, batch_id, owner):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM jobs WHERE batch_id=? AND owner=? ORDER BY created_at,id", (batch_id, owner))]
+
+    def cancel(self, job_id, owner):
+        now = time.time()
+        with self.connect(True) as db:
+            db.execute("UPDATE jobs SET status='cancelled',verdict=NULL,error_code=NULL,finished_at=?,updated_at=? WHERE id=? AND owner=? AND channel='ui' AND status='processing'", (now, now, job_id, owner))
+
+    def release(self, job_id, worker_id):
+        with self.connect(True) as db:
+            db.execute("UPDATE jobs SET worker_id=NULL WHERE id=? AND worker_id=? AND status!='processing'", (job_id, worker_id))
+
+    def restore(self, job_id, owner):
+        now = time.time()
+        with self.connect(True) as db:
+            row = db.execute("SELECT * FROM jobs WHERE id=? AND owner=? AND channel='ui'", (job_id, owner)).fetchone()
+            if row is None:
+                raise SentryError("NOT_FOUND", 404)
+            if row["status"] == "processing":
+                return  # idempotent restore, never a second queue entry
+            if row["status"] not in {"cancelled", "failed"}:
+                raise SentryError("INVALID_STATE", 409)
+            if row["worker_id"] is not None:
+                raise SentryError("JOB_BUSY", 409)
+            if db.execute("SELECT count(*) FROM jobs WHERE status='processing'").fetchone()[0] >= self.settings.queue_capacity:
+                raise SentryError("QUEUE_FULL", 503)
+            db.execute("""UPDATE jobs SET status='processing',stage='queued',deadline=?,started_at=NULL,
+                finished_at=NULL,worker_id=NULL,error_code=NULL,result_ref=NULL,verdict=NULL,timings='{}',
+                updated_at=?,attempt=attempt+1 WHERE id=?""", (now+self.settings.job_timeout_sec, now, job_id))
+
+    def delete_job(self, job_id, owner):
+        with self.connect(True) as db:
+            row = db.execute("SELECT * FROM jobs WHERE id=? AND owner=? AND channel='ui'", (job_id, owner)).fetchone()
+            if row is None:
+                raise SentryError("NOT_FOUND", 404)
+            if row["status"] == "processing" or row["worker_id"] is not None:
+                raise SentryError("JOB_BUSY", 409)
+            db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
